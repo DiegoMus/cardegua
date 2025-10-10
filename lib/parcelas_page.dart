@@ -1,15 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 class ParcelasPage extends StatefulWidget {
   final int productorId;
-  const ParcelasPage({super.key, required this.productorId});
+  final String? nombreProductor;
+  const ParcelasPage({
+    super.key,
+    required this.productorId,
+    this.nombreProductor,
+  });
 
   @override
   State<ParcelasPage> createState() => _ParcelasPageState();
 }
 
-class _ParcelasPageState extends State<ParcelasPage> {
+class _ParcelasPageState extends State<ParcelasPage>
+    with SingleTickerProviderStateMixin {
   List<dynamic> parcelas = [];
   List<dynamic> departamentos = [];
   List<dynamic> municipios = [];
@@ -25,11 +32,29 @@ class _ParcelasPageState extends State<ParcelasPage> {
   final _tipoCultivoController = TextEditingController();
   final _hectareasController = TextEditingController();
 
+  late AnimationController _animationController;
+
   @override
   void initState() {
     super.initState();
     fetchDepartamentos();
     fetchParcelas();
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 700),
+      vsync: this,
+    );
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    _nombreController.dispose();
+    _latitudController.dispose();
+    _longitudController.dispose();
+    _altitudController.dispose();
+    _tipoCultivoController.dispose();
+    _hectareasController.dispose();
+    super.dispose();
   }
 
   Future<void> fetchDepartamentos() async {
@@ -62,6 +87,7 @@ class _ParcelasPageState extends State<ParcelasPage> {
     setState(() {
       parcelas = result;
       loading = false;
+      _animationController.forward(from: 0);
     });
   }
 
@@ -75,7 +101,7 @@ class _ParcelasPageState extends State<ParcelasPage> {
     final supabase = Supabase.instance.client;
     await supabase.from('parcelas').insert({
       'nombre': _nombreController.text,
-      'hectareas': double.tryParse(_hectareasController.text) ?? 0,
+      'area': double.tryParse(_hectareasController.text) ?? 0,
       'latitud': _latitudController.text,
       'longitud': _longitudController.text,
       'altitud': _altitudController.text,
@@ -98,7 +124,7 @@ class _ParcelasPageState extends State<ParcelasPage> {
   Future<void> updateParcela(
     int id,
     String nombre,
-    double hectareas,
+    double area,
     String latitud,
     String longitud,
     String altitud,
@@ -110,7 +136,7 @@ class _ParcelasPageState extends State<ParcelasPage> {
         .from('parcelas')
         .update({
           'nombre': nombre,
-          'hectareas': hectareas,
+          'area': area,
           'latitud': latitud,
           'longitud': longitud,
           'altitud': altitud,
@@ -129,7 +155,7 @@ class _ParcelasPageState extends State<ParcelasPage> {
 
   void showEditDialog(Map parcela) {
     _nombreController.text = parcela['nombre'] ?? '';
-    _hectareasController.text = parcela['hectareas']?.toString() ?? '';
+    _hectareasController.text = parcela['area']?.toString() ?? '';
     _latitudController.text = parcela['latitud'] ?? '';
     _longitudController.text = parcela['longitud'] ?? '';
     _altitudController.text = parcela['altitud'] ?? '';
@@ -141,38 +167,82 @@ class _ParcelasPageState extends State<ParcelasPage> {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Editar Parcela'),
+        backgroundColor: const Color(0xFFeafbe7),
+        title: Row(
+          children: [
+            const Icon(Icons.edit, color: Colors.green, size: 20),
+            const SizedBox(width: 8),
+            Text(
+              'Editar Parcela',
+              style: GoogleFonts.montserrat(color: Colors.green[800]),
+            ),
+          ],
+        ),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: _nombreController,
-                decoration: const InputDecoration(labelText: 'Nombre'),
+                decoration: const InputDecoration(
+                  labelText: 'Nombre',
+                  prefixIcon: Icon(
+                    Icons.landscape,
+                    color: Colors.green,
+                    size: 20,
+                  ),
+                ),
               ),
               TextField(
                 controller: _hectareasController,
-                decoration: const InputDecoration(labelText: 'Hectáreas'),
+                decoration: const InputDecoration(
+                  labelText: 'Hectáreas',
+                  prefixIcon: Icon(
+                    Icons.square_foot,
+                    color: Colors.green,
+                    size: 20,
+                  ),
+                ),
               ),
               TextField(
                 controller: _latitudController,
-                decoration: const InputDecoration(labelText: 'Latitud'),
+                decoration: const InputDecoration(
+                  labelText: 'Latitud',
+                  prefixIcon: Icon(Icons.place, color: Colors.green, size: 20),
+                ),
               ),
               TextField(
                 controller: _longitudController,
-                decoration: const InputDecoration(labelText: 'Longitud'),
+                decoration: const InputDecoration(
+                  labelText: 'Longitud',
+                  prefixIcon: Icon(
+                    Icons.place_outlined,
+                    color: Colors.green,
+                    size: 20,
+                  ),
+                ),
               ),
               TextField(
                 controller: _altitudController,
-                decoration: const InputDecoration(labelText: 'Altitud'),
+                decoration: const InputDecoration(
+                  labelText: 'Altitud',
+                  prefixIcon: Icon(Icons.height, color: Colors.green, size: 20),
+                ),
               ),
               TextField(
                 controller: _tipoCultivoController,
-                decoration: const InputDecoration(labelText: 'Tipo de Cultivo'),
+                decoration: const InputDecoration(
+                  labelText: 'Tipo de Cultivo',
+                  prefixIcon: Icon(Icons.eco, color: Colors.green, size: 20),
+                ),
               ),
-              DropdownButton<int>(
-                value: selectedDepartamentoId,
-                hint: const Text('Seleccione departamento'),
+              DropdownButtonFormField<int>(
+                initialValue: selectedDepartamentoId,
+                decoration: const InputDecoration(
+                  labelText: 'Departamento',
+                  prefixIcon: Icon(Icons.map, color: Colors.green, size: 20),
+                  border: OutlineInputBorder(),
+                ),
                 items: departamentos.map<DropdownMenuItem<int>>((dpto) {
                   return DropdownMenuItem<int>(
                     value: dpto['id_departamento'],
@@ -190,9 +260,18 @@ class _ParcelasPageState extends State<ParcelasPage> {
                   }
                 },
               ),
-              DropdownButton<int>(
-                value: selectedMunicipioId,
-                hint: const Text('Seleccione municipio'),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<int>(
+                initialValue: selectedMunicipioId,
+                decoration: const InputDecoration(
+                  labelText: 'Municipio',
+                  prefixIcon: Icon(
+                    Icons.location_city,
+                    color: Colors.green,
+                    size: 20,
+                  ),
+                  border: OutlineInputBorder(),
+                ),
                 items: municipios.map<DropdownMenuItem<int>>((mun) {
                   return DropdownMenuItem<int>(
                     value: mun['id_municipio'],
@@ -212,7 +291,7 @@ class _ParcelasPageState extends State<ParcelasPage> {
           TextButton(
             onPressed: () {
               updateParcela(
-                parcela['id'],
+                parcela['id_parcela'],
                 _nombreController.text,
                 double.tryParse(_hectareasController.text) ?? 0,
                 _latitudController.text,
@@ -223,7 +302,16 @@ class _ParcelasPageState extends State<ParcelasPage> {
               );
               Navigator.pop(context);
             },
-            child: const Text('Guardar'),
+            child: Row(
+              children: [
+                const Icon(Icons.save, color: Colors.green, size: 20),
+                const SizedBox(width: 4),
+                Text(
+                  'Guardar',
+                  style: GoogleFonts.montserrat(color: Colors.green),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -232,106 +320,359 @@ class _ParcelasPageState extends State<ParcelasPage> {
 
   @override
   Widget build(BuildContext context) {
+    final natureGreen = const Color(0xFF6DB571);
+    final backgroundNature = const Color(0xFFEAFBE7);
+    final accentNature = const Color(0xFFB2D8B2);
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Parcelas')),
+      backgroundColor: backgroundNature,
+      appBar: AppBar(
+        backgroundColor: natureGreen,
+        title: Text(
+          widget.nombreProductor != null
+              ? 'Parcelas de ${widget.nombreProductor}'
+              : 'Parcelas',
+          style: GoogleFonts.montserrat(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        elevation: 0,
+      ),
       body: loading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
+              padding: const EdgeInsets.all(12.0),
               children: [
-                Padding(
-                  padding: const EdgeInsets.all(8.0),
-                  child: Column(
-                    children: [
-                      TextField(
-                        controller: _nombreController,
-                        decoration: const InputDecoration(labelText: 'Nombre'),
-                      ),
-                      TextField(
-                        controller: _hectareasController,
-                        decoration: const InputDecoration(
-                          labelText: 'Hectáreas',
-                        ),
-                      ),
-                      TextField(
-                        controller: _latitudController,
-                        decoration: const InputDecoration(labelText: 'Latitud'),
-                      ),
-                      TextField(
-                        controller: _longitudController,
-                        decoration: const InputDecoration(
-                          labelText: 'Longitud',
-                        ),
-                      ),
-                      TextField(
-                        controller: _altitudController,
-                        decoration: const InputDecoration(labelText: 'Altitud'),
-                      ),
-                      TextField(
-                        controller: _tipoCultivoController,
-                        decoration: const InputDecoration(
-                          labelText: 'Tipo de Cultivo',
-                        ),
-                      ),
-                      DropdownButton<int>(
-                        value: selectedDepartamentoId,
-                        hint: const Text('Seleccione departamento'),
-                        items: departamentos.map<DropdownMenuItem<int>>((dpto) {
-                          return DropdownMenuItem<int>(
-                            value: dpto['id_departamento'],
-                            child: Text(dpto['nombre']),
-                          );
-                        }).toList(),
-                        onChanged: (value) {
-                          setState(() {
-                            selectedDepartamentoId = value;
-                            municipios = [];
-                            selectedMunicipioId = null;
-                          });
-                          if (value != null) {
-                            fetchMunicipios(value);
-                          }
-                        },
-                      ),
-                      DropdownButton<int>(
-                        value: selectedMunicipioId,
-                        hint: const Text('Seleccione municipio'),
-                        items: municipios.map<DropdownMenuItem<int>>((mun) {
-                          return DropdownMenuItem<int>(
-                            value: mun['id_municipio'],
-                            child: Text(mun['nombre']),
-                          );
-                        }).toList(),
-                        onChanged: (value) {
-                          setState(() {
-                            selectedMunicipioId = value;
-                          });
-                        },
-                      ),
-                      ElevatedButton(
-                        onPressed: addParcela,
-                        child: const Text('Agregar Parcela'),
-                      ),
-                    ],
+                Card(
+                  elevation: 2,
+                  color: accentNature,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
                   ),
-                ),
-                ...parcelas.map(
-                  (parcela) => ListTile(
-                    title: Text(parcela['nombre'] ?? ''),
-                    subtitle: Text('Hectáreas: ${parcela['hectareas']}'),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    child: Column(
                       children: [
-                        IconButton(
-                          icon: const Icon(Icons.edit),
-                          onPressed: () => showEditDialog(parcela),
+                        Text(
+                          'Nueva Parcela',
+                          style: GoogleFonts.montserrat(
+                            color: natureGreen,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
                         ),
-                        IconButton(
-                          icon: const Icon(Icons.delete),
-                          onPressed: () => deleteParcela(parcela['id_parcela']),
+                        const SizedBox(height: 6),
+                        TextField(
+                          controller: _nombreController,
+                          decoration: const InputDecoration(
+                            labelText: 'Nombre',
+                            prefixIcon: Icon(
+                              Icons.landscape,
+                              color: Colors.green,
+                              size: 20,
+                            ),
+                            filled: true,
+                            fillColor: Colors.white,
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(
+                              vertical: 8,
+                              horizontal: 8,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: _hectareasController,
+                          decoration: const InputDecoration(
+                            labelText: 'Area (Ha)',
+                            prefixIcon: Icon(
+                              Icons.square_foot,
+                              color: Colors.green,
+                              size: 20,
+                            ),
+                            filled: true,
+                            fillColor: Colors.white,
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(
+                              vertical: 8,
+                              horizontal: 8,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: _latitudController,
+                          decoration: const InputDecoration(
+                            labelText: 'Latitud',
+                            prefixIcon: Icon(
+                              Icons.place,
+                              color: Colors.green,
+                              size: 20,
+                            ),
+                            filled: true,
+                            fillColor: Colors.white,
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(
+                              vertical: 8,
+                              horizontal: 8,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: _longitudController,
+                          decoration: const InputDecoration(
+                            labelText: 'Longitud',
+                            prefixIcon: Icon(
+                              Icons.place_outlined,
+                              color: Colors.green,
+                              size: 20,
+                            ),
+                            filled: true,
+                            fillColor: Colors.white,
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(
+                              vertical: 8,
+                              horizontal: 8,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: _altitudController,
+                          decoration: const InputDecoration(
+                            labelText: 'Altitud',
+                            prefixIcon: Icon(
+                              Icons.height,
+                              color: Colors.green,
+                              size: 20,
+                            ),
+                            filled: true,
+                            fillColor: Colors.white,
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(
+                              vertical: 8,
+                              horizontal: 8,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: _tipoCultivoController,
+                          decoration: const InputDecoration(
+                            labelText: 'Tipo de Cultivo',
+                            prefixIcon: Icon(
+                              Icons.eco,
+                              color: Colors.green,
+                              size: 20,
+                            ),
+                            filled: true,
+                            fillColor: Colors.white,
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(
+                              vertical: 8,
+                              horizontal: 8,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        DropdownButtonFormField<int>(
+                          initialValue: selectedDepartamentoId,
+                          decoration: const InputDecoration(
+                            labelText: 'Departamento',
+                            prefixIcon: Icon(
+                              Icons.map,
+                              color: Colors.green,
+                              size: 20,
+                            ),
+                            border: OutlineInputBorder(),
+                          ),
+                          items: departamentos.map<DropdownMenuItem<int>>((
+                            dpto,
+                          ) {
+                            return DropdownMenuItem<int>(
+                              value: dpto['id_departamento'],
+                              child: Text(dpto['nombre']),
+                            );
+                          }).toList(),
+                          onChanged: (value) {
+                            setState(() {
+                              selectedDepartamentoId = value;
+                              municipios = [];
+                              selectedMunicipioId = null;
+                            });
+                            if (value != null) {
+                              fetchMunicipios(value);
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 8),
+                        DropdownButtonFormField<int>(
+                          initialValue: selectedMunicipioId,
+                          decoration: const InputDecoration(
+                            labelText: 'Municipio',
+                            prefixIcon: Icon(
+                              Icons.location_city,
+                              color: Colors.green,
+                              size: 20,
+                            ),
+                            border: OutlineInputBorder(),
+                          ),
+                          items: municipios.map<DropdownMenuItem<int>>((mun) {
+                            return DropdownMenuItem<int>(
+                              value: mun['id_municipio'],
+                              child: Text(mun['nombre']),
+                            );
+                          }).toList(),
+                          onChanged: (value) {
+                            setState(() {
+                              selectedMunicipioId = value;
+                            });
+                          },
+                        ),
+                        const SizedBox(height: 8),
+                        ElevatedButton.icon(
+                          icon: const Icon(
+                            Icons.add_circle_outline,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: natureGreen,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                              vertical: 10,
+                              horizontal: 18,
+                            ),
+                          ),
+                          label: Text(
+                            'Agregar Parcela',
+                            style: GoogleFonts.montserrat(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          onPressed: addParcela,
                         ),
                       ],
                     ),
                   ),
+                ),
+                const SizedBox(height: 10),
+                AnimatedBuilder(
+                  animation: _animationController,
+                  builder: (context, child) {
+                    return Column(
+                      children: [
+                        ...parcelas.asMap().entries.map((entry) {
+                          final i = entry.key;
+                          final parcela = entry.value;
+                          return FadeTransition(
+                            opacity: CurvedAnimation(
+                              parent: _animationController,
+                              curve: Interval(
+                                i / (parcelas.isEmpty ? 1 : parcelas.length),
+                                1.0,
+                                curve: Curves.easeIn,
+                              ),
+                            ),
+                            child: Card(
+                              margin: const EdgeInsets.symmetric(vertical: 2),
+                              elevation: 1,
+                              color: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(5),
+                              ),
+                              child: ListTile(
+                                leading: CircleAvatar(
+                                  backgroundColor: accentNature,
+                                  child: Icon(
+                                    Icons.landscape,
+                                    color: natureGreen,
+                                  ),
+                                ),
+                                title: Text(
+                                  parcela['nombre'] ?? '',
+                                  style: GoogleFonts.montserrat(
+                                    color: natureGreen,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                subtitle: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.square_foot,
+                                      size: 16,
+                                      color: Colors.green[600],
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      'Ha: ${parcela['area'] ?? 'N/A'}',
+                                      style: GoogleFonts.montserrat(
+                                        color: Colors.green[800],
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                trailing: PopupMenuButton<String>(
+                                  icon: Icon(
+                                    Icons.more_vert,
+                                    color: natureGreen,
+                                  ),
+                                  onSelected: (value) {
+                                    if (value == 'edit') {
+                                      showEditDialog(parcela);
+                                    } else if (value == 'delete') {
+                                      deleteParcela(parcela['id_parcela']);
+                                    }
+                                  },
+                                  itemBuilder: (context) => [
+                                    PopupMenuItem(
+                                      value: 'edit',
+                                      child: Row(
+                                        children: [
+                                          Icon(Icons.edit, color: natureGreen),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            'Editar',
+                                            style: GoogleFonts.montserrat(
+                                              color: natureGreen,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'delete',
+                                      child: Row(
+                                        children: [
+                                          Icon(Icons.delete, color: Colors.red),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            'Eliminar',
+                                            style: GoogleFonts.montserrat(
+                                              color: Colors.red,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                      ],
+                    );
+                  },
                 ),
               ],
             ),

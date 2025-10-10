@@ -383,53 +383,81 @@ class _ProductoresPageState extends State<ProductoresPage>
                                     ),
                                   ],
                                 ),
-                                trailing: SizedBox(
-                                  width: 180,
-                                  child: Wrap(
-                                    spacing: 0.5,
-                                    children: [
-                                      IconButton(
-                                        icon: const Icon(
-                                          Icons.edit,
-                                          color: Colors.green,
-                                          size: 20,
-                                        ),
-                                        tooltip: 'Editar',
-                                        onPressed: () =>
-                                            showEditDialog(productor),
-                                      ),
-                                      IconButton(
-                                        icon: const Icon(
-                                          Icons.delete,
-                                          color: Colors.red,
-                                          size: 20,
-                                        ),
-                                        tooltip: 'Eliminar',
-                                        onPressed: () => deleteProductor(
-                                          productor['id_productor'],
-                                        ),
-                                      ),
-                                      IconButton(
-                                        icon: const Icon(
-                                          Icons.landscape,
-                                          color: Colors.brown,
-                                          size: 20,
-                                        ),
-                                        tooltip: 'Parcelas',
-                                        onPressed: () {
-                                          Navigator.push(
-                                            context,
-                                            MaterialPageRoute(
-                                              builder: (_) => ParcelasPage(
-                                                productorId:
-                                                    productor['id_productor'],
-                                              ),
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                    ],
+
+                                trailing: PopupMenuButton<String>(
+                                  icon: Icon(
+                                    Icons.more_vert,
+                                    color: natureGreen,
                                   ),
+                                  onSelected: (value) {
+                                    if (value == 'edit') {
+                                      showEditDialog(productor);
+                                    } else if (value == 'delete') {
+                                      deleteProductor(
+                                        productor['id_productor'],
+                                      );
+                                    } else if (value == 'parcelas') {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => ParcelasPage(
+                                            productorId:
+                                                productor['id_productor'],
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                  },
+                                  itemBuilder: (context) => [
+                                    PopupMenuItem(
+                                      value: 'edit',
+                                      child: Row(
+                                        children: [
+                                          Icon(Icons.edit, color: natureGreen),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            'Editar',
+                                            style: GoogleFonts.montserrat(
+                                              color: natureGreen,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'delete',
+                                      child: Row(
+                                        children: [
+                                          Icon(Icons.delete, color: Colors.red),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            'Eliminar',
+                                            style: GoogleFonts.montserrat(
+                                              color: Colors.red,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'parcelas',
+                                      child: Row(
+                                        children: [
+                                          Icon(
+                                            Icons.landscape,
+                                            color: natureGreen,
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            'Ver Parcelas',
+                                            style: GoogleFonts.montserrat(
+                                              color: natureGreen,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ),
