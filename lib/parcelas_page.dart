@@ -288,7 +288,7 @@ class _ParcelasPageState extends State<ParcelasPage>
                           controller: _areaController,
                           keyboardType: TextInputType.number,
                           decoration: const InputDecoration(
-                            labelText: 'Area (Ha)',
+                            labelText: 'Area (Cuerdas)',
                             prefixIcon: Icon(
                               Icons.square_foot,
                               color: Colors.green,
@@ -531,7 +531,7 @@ class _ParcelasPageState extends State<ParcelasPage>
                                     ),
                                     const SizedBox(width: 4),
                                     Text(
-                                      'Ha: ${parcela['area'] ?? 'N/A'}',
+                                      'Cuerdas: ${parcela['area'] ?? 'N/A'}',
                                       style: GoogleFonts.montserrat(
                                         color: Colors.green[800],
                                         fontSize: 13,
