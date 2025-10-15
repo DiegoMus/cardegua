@@ -22,6 +22,9 @@ class _ProductoresPageState extends State<ProductoresPage>
 
   late AnimationController _animationController;
 
+  bool isEditing = false;
+  int? editingProductorId;
+
   @override
   void initState() {
     super.initState();
@@ -53,6 +56,15 @@ class _ProductoresPageState extends State<ProductoresPage>
     });
   }
 
+  void clearFormFields() {
+    _nombreController.clear();
+    _emailController.clear();
+    _telephoneController.clear();
+    _cuiController.clear();
+    isEditing = false;
+    editingProductorId = null;
+  }
+
   Future<void> addProductor() async {
     final supabase = Supabase.instance.client;
     await supabase.from('productores').insert({
@@ -61,10 +73,7 @@ class _ProductoresPageState extends State<ProductoresPage>
       'telefono': _telephoneController.text,
       'cui': _cuiController.text,
     });
-    _nombreController.clear();
-    _emailController.clear();
-    _telephoneController.clear();
-    _cuiController.clear();
+    clearFormFields();
     fetchProductores();
   }
 
@@ -85,6 +94,7 @@ class _ProductoresPageState extends State<ProductoresPage>
           'cui': cui,
         })
         .eq('id_productor', id);
+    clearFormFields();
     fetchProductores();
   }
 
@@ -94,84 +104,15 @@ class _ProductoresPageState extends State<ProductoresPage>
     fetchProductores();
   }
 
-  void showEditDialog(Map productor) {
-    _nombreController.text = productor['nombre'] ?? '';
-    _emailController.text = productor['email'] ?? '';
-    _telephoneController.text = productor['telefono'] ?? '';
-    _cuiController.text = productor['cui'] ?? '';
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: const Color(0xFFeafbe7),
-        title: Row(
-          children: [
-            const Icon(Icons.edit, color: Colors.green, size: 20),
-            const SizedBox(width: 8),
-            Text(
-              'Editar Productor',
-              style: GoogleFonts.montserrat(color: Colors.green[800]),
-            ),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: _nombreController,
-              decoration: const InputDecoration(
-                labelText: 'Nombre',
-                prefixIcon: Icon(Icons.person, color: Colors.green, size: 20),
-              ),
-            ),
-            TextField(
-              controller: _emailController,
-              decoration: const InputDecoration(
-                labelText: 'Email',
-                prefixIcon: Icon(Icons.email, color: Colors.green, size: 20),
-              ),
-            ),
-            TextField(
-              controller: _telephoneController,
-              decoration: const InputDecoration(
-                labelText: 'Teléfono',
-                prefixIcon: Icon(Icons.phone, color: Colors.green, size: 20),
-              ),
-            ),
-            TextField(
-              controller: _cuiController,
-              decoration: const InputDecoration(
-                labelText: 'CUI',
-                prefixIcon: Icon(Icons.badge, color: Colors.green, size: 20),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              updateProductor(
-                productor['id_productor'],
-                _nombreController.text,
-                _emailController.text,
-                _telephoneController.text,
-                _cuiController.text,
-              );
-              Navigator.pop(context);
-            },
-            child: Row(
-              children: [
-                const Icon(Icons.save, color: Colors.green, size: 20),
-                const SizedBox(width: 4),
-                Text(
-                  'Guardar',
-                  style: GoogleFonts.montserrat(color: Colors.green),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
+  void startEditProductor(Map productor) {
+    setState(() {
+      isEditing = true;
+      editingProductorId = productor['id_productor'];
+      _nombreController.text = productor['nombre'] ?? '';
+      _emailController.text = productor['email'] ?? '';
+      _telephoneController.text = productor['telefono'] ?? '';
+      _cuiController.text = productor['cui'] ?? '';
+    });
   }
 
   @override
@@ -193,6 +134,27 @@ class _ProductoresPageState extends State<ProductoresPage>
         ),
         elevation: 0,
       ),
+      floatingActionButton: isEditing
+          ? FloatingActionButton.extended(
+              backgroundColor: Colors.orange,
+              icon: const Icon(Icons.edit, color: Colors.white),
+              label: Text(
+                'Guardar edición',
+                style: GoogleFonts.montserrat(color: Colors.white),
+              ),
+              onPressed: () {
+                if (editingProductorId != null) {
+                  updateProductor(
+                    editingProductorId!,
+                    _nombreController.text,
+                    _emailController.text,
+                    _telephoneController.text,
+                    _cuiController.text,
+                  );
+                }
+              },
+            )
+          : null,
       body: loading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
@@ -212,7 +174,7 @@ class _ProductoresPageState extends State<ProductoresPage>
                     child: Column(
                       children: [
                         Text(
-                          'Nuevo Productor',
+                          isEditing ? 'Editar Productor' : 'Nuevo Productor',
                           style: GoogleFonts.montserrat(
                             color: natureGreen,
                             fontWeight: FontWeight.bold,
@@ -295,32 +257,49 @@ class _ProductoresPageState extends State<ProductoresPage>
                             ),
                           ),
                         ),
-
                         const SizedBox(height: 8),
-                        ElevatedButton.icon(
-                          icon: const Icon(
-                            Icons.add_circle_outline,
-                            color: Colors.white,
-                            size: 20,
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: natureGreen,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                icon: Icon(
+                                  isEditing
+                                      ? Icons.cancel
+                                      : Icons.add_circle_outline,
+                                  color: Colors.white,
+                                  size: 20,
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: isEditing
+                                      ? Colors.red
+                                      : natureGreen,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 10,
+                                    horizontal: 18,
+                                  ),
+                                ),
+                                label: Text(
+                                  isEditing
+                                      ? 'Cancelar edición'
+                                      : 'Agregar Productor',
+                                  style: GoogleFonts.montserrat(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                onPressed: () {
+                                  if (isEditing) {
+                                    clearFormFields();
+                                  } else {
+                                    addProductor();
+                                  }
+                                },
+                              ),
                             ),
-                            padding: const EdgeInsets.symmetric(
-                              vertical: 10,
-                              horizontal: 18,
-                            ),
-                          ),
-                          label: Text(
-                            'Agregar',
-                            style: GoogleFonts.montserrat(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          onPressed: addProductor,
+                          ],
                         ),
                       ],
                     ),
@@ -383,7 +362,6 @@ class _ProductoresPageState extends State<ProductoresPage>
                                     ),
                                   ],
                                 ),
-
                                 trailing: PopupMenuButton<String>(
                                   icon: Icon(
                                     Icons.more_vert,
@@ -391,7 +369,7 @@ class _ProductoresPageState extends State<ProductoresPage>
                                   ),
                                   onSelected: (value) {
                                     if (value == 'edit') {
-                                      showEditDialog(productor);
+                                      startEditProductor(productor);
                                     } else if (value == 'delete') {
                                       deleteProductor(
                                         productor['id_productor'],
@@ -403,6 +381,8 @@ class _ProductoresPageState extends State<ProductoresPage>
                                           builder: (_) => ParcelasPage(
                                             productorId:
                                                 productor['id_productor'],
+                                            nombreProductor:
+                                                productor['nombre'] ?? '',
                                           ),
                                         ),
                                       );

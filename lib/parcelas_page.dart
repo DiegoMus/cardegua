@@ -24,13 +24,15 @@ class _ParcelasPageState extends State<ParcelasPage>
   int? selectedMunicipioId;
 
   bool loading = false;
+  bool isEditing = false;
+  int? editingParcelaId;
 
   final _nombreController = TextEditingController();
   final _latitudController = TextEditingController();
   final _longitudController = TextEditingController();
   final _altitudController = TextEditingController();
   final _tipoCultivoController = TextEditingController();
-  final _hectareasController = TextEditingController();
+  final _areaController = TextEditingController();
 
   late AnimationController _animationController;
 
@@ -53,7 +55,7 @@ class _ParcelasPageState extends State<ParcelasPage>
     _longitudController.dispose();
     _altitudController.dispose();
     _tipoCultivoController.dispose();
-    _hectareasController.dispose();
+    _areaController.dispose();
     super.dispose();
   }
 
@@ -82,12 +84,28 @@ class _ParcelasPageState extends State<ParcelasPage>
     final supabase = Supabase.instance.client;
     final result = await supabase
         .from('parcelas')
-        .select()
+        .select('*, municipios(id_municipio, nombre, id_departamento)')
         .eq('id_productor', widget.productorId);
     setState(() {
       parcelas = result;
       loading = false;
       _animationController.forward(from: 0);
+    });
+  }
+
+  void clearFormFields() {
+    _nombreController.clear();
+    _areaController.clear();
+    _latitudController.clear();
+    _longitudController.clear();
+    _altitudController.clear();
+    _tipoCultivoController.clear();
+    setState(() {
+      selectedDepartamentoId = null;
+      municipios = [];
+      selectedMunicipioId = null;
+      editingParcelaId = null;
+      isEditing = false;
     });
   }
 
@@ -101,23 +119,14 @@ class _ParcelasPageState extends State<ParcelasPage>
     final supabase = Supabase.instance.client;
     await supabase.from('parcelas').insert({
       'nombre': _nombreController.text,
-      'area': double.tryParse(_hectareasController.text) ?? 0,
-      'latitud': _latitudController.text,
+      'area': double.tryParse(_areaController.text) ?? 0,
       'longitud': _longitudController.text,
       'altitud': _altitudController.text,
       'tipo_cultivo': _tipoCultivoController.text,
       'id_productor': widget.productorId,
       'id_municipio': selectedMunicipioId,
     });
-    _nombreController.clear();
-    _hectareasController.clear();
-    _latitudController.clear();
-    _longitudController.clear();
-    _altitudController.clear();
-    _tipoCultivoController.clear();
-    selectedDepartamentoId = null;
-    municipios = [];
-    selectedMunicipioId = null;
+    clearFormFields();
     fetchParcelas();
   }
 
@@ -144,6 +153,7 @@ class _ParcelasPageState extends State<ParcelasPage>
           'id_municipio': municipioId,
         })
         .eq('id_parcela', id);
+    clearFormFields();
     fetchParcelas();
   }
 
@@ -153,169 +163,34 @@ class _ParcelasPageState extends State<ParcelasPage>
     fetchParcelas();
   }
 
-  void showEditDialog(Map parcela) {
-    _nombreController.text = parcela['nombre'] ?? '';
-    _hectareasController.text = parcela['area']?.toString() ?? '';
-    _latitudController.text = parcela['latitud'] ?? '';
-    _longitudController.text = parcela['longitud'] ?? '';
-    _altitudController.text = parcela['altitud'] ?? '';
-    _tipoCultivoController.text = parcela['tipo_cultivo'] ?? '';
-    selectedDepartamentoId = null;
-    municipios = [];
-    selectedMunicipioId = parcela['id_municipio'];
-
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: const Color(0xFFeafbe7),
-        title: Row(
-          children: [
-            const Icon(Icons.edit, color: Colors.green, size: 20),
-            const SizedBox(width: 8),
-            Text(
-              'Editar Parcela',
-              style: GoogleFonts.montserrat(color: Colors.green[800]),
-            ),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: _nombreController,
-                decoration: const InputDecoration(
-                  labelText: 'Nombre',
-                  prefixIcon: Icon(
-                    Icons.landscape,
-                    color: Colors.green,
-                    size: 20,
-                  ),
-                ),
-              ),
-              TextField(
-                controller: _hectareasController,
-                decoration: const InputDecoration(
-                  labelText: 'Hectáreas',
-                  prefixIcon: Icon(
-                    Icons.square_foot,
-                    color: Colors.green,
-                    size: 20,
-                  ),
-                ),
-              ),
-              TextField(
-                controller: _latitudController,
-                decoration: const InputDecoration(
-                  labelText: 'Latitud',
-                  prefixIcon: Icon(Icons.place, color: Colors.green, size: 20),
-                ),
-              ),
-              TextField(
-                controller: _longitudController,
-                decoration: const InputDecoration(
-                  labelText: 'Longitud',
-                  prefixIcon: Icon(
-                    Icons.place_outlined,
-                    color: Colors.green,
-                    size: 20,
-                  ),
-                ),
-              ),
-              TextField(
-                controller: _altitudController,
-                decoration: const InputDecoration(
-                  labelText: 'Altitud',
-                  prefixIcon: Icon(Icons.height, color: Colors.green, size: 20),
-                ),
-              ),
-              TextField(
-                controller: _tipoCultivoController,
-                decoration: const InputDecoration(
-                  labelText: 'Tipo de Cultivo',
-                  prefixIcon: Icon(Icons.eco, color: Colors.green, size: 20),
-                ),
-              ),
-              DropdownButtonFormField<int>(
-                initialValue: selectedDepartamentoId,
-                decoration: const InputDecoration(
-                  labelText: 'Departamento',
-                  prefixIcon: Icon(Icons.map, color: Colors.green, size: 20),
-                  border: OutlineInputBorder(),
-                ),
-                items: departamentos.map<DropdownMenuItem<int>>((dpto) {
-                  return DropdownMenuItem<int>(
-                    value: dpto['id_departamento'],
-                    child: Text(dpto['nombre']),
-                  );
-                }).toList(),
-                onChanged: (value) {
-                  setState(() {
-                    selectedDepartamentoId = value;
-                    municipios = [];
-                    selectedMunicipioId = null;
-                  });
-                  if (value != null) {
-                    fetchMunicipios(value);
-                  }
-                },
-              ),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<int>(
-                initialValue: selectedMunicipioId,
-                decoration: const InputDecoration(
-                  labelText: 'Municipio',
-                  prefixIcon: Icon(
-                    Icons.location_city,
-                    color: Colors.green,
-                    size: 20,
-                  ),
-                  border: OutlineInputBorder(),
-                ),
-                items: municipios.map<DropdownMenuItem<int>>((mun) {
-                  return DropdownMenuItem<int>(
-                    value: mun['id_municipio'],
-                    child: Text(mun['nombre']),
-                  );
-                }).toList(),
-                onChanged: (value) {
-                  setState(() {
-                    selectedMunicipioId = value;
-                  });
-                },
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              updateParcela(
-                parcela['id_parcela'],
-                _nombreController.text,
-                double.tryParse(_hectareasController.text) ?? 0,
-                _latitudController.text,
-                _longitudController.text,
-                _altitudController.text,
-                _tipoCultivoController.text,
-                selectedMunicipioId ?? parcela['id_municipio'],
-              );
-              Navigator.pop(context);
-            },
-            child: Row(
-              children: [
-                const Icon(Icons.save, color: Colors.green, size: 20),
-                const SizedBox(width: 4),
-                Text(
-                  'Guardar',
-                  style: GoogleFonts.montserrat(color: Colors.green),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
+  void startEditParcela(Map parcela) {
+    setState(() {
+      isEditing = true;
+      editingParcelaId = parcela['id_parcela'];
+      _nombreController.text = parcela['nombre'] ?? '';
+      _areaController.text =
+          double.tryParse(parcela['area']?.toString() ?? '0')?.toString() ?? '';
+      _latitudController.text =
+          double.tryParse(parcela['latitud']?.toString() ?? '0')?.toString() ??
+          '';
+      _longitudController.text =
+          double.tryParse(parcela['longitud']?.toString() ?? '0')?.toString() ??
+          '';
+      _altitudController.text =
+          double.tryParse(parcela['altitud']?.toString() ?? '0')?.toString() ??
+          '';
+      _tipoCultivoController.text = parcela['tipo_cultivo'] ?? '';
+      selectedDepartamentoId =
+          parcela['municipios']?['id_departamento'] ??
+          parcela['id_departamento'];
+    });
+    if (selectedDepartamentoId != null) {
+      fetchMunicipios(selectedDepartamentoId!).then((_) {
+        setState(() {
+          selectedMunicipioId = parcela['id_municipio'];
+        });
+      });
+    }
   }
 
   @override
@@ -339,6 +214,30 @@ class _ParcelasPageState extends State<ParcelasPage>
         ),
         elevation: 0,
       ),
+      floatingActionButton: isEditing
+          ? FloatingActionButton.extended(
+              backgroundColor: Colors.orange,
+              icon: const Icon(Icons.edit, color: Colors.white),
+              label: Text(
+                'Guardar edición',
+                style: GoogleFonts.montserrat(color: Colors.white),
+              ),
+              onPressed: () {
+                if (editingParcelaId != null && selectedMunicipioId != null) {
+                  updateParcela(
+                    editingParcelaId!,
+                    _nombreController.text,
+                    double.tryParse(_areaController.text) ?? 0,
+                    _latitudController.text,
+                    _longitudController.text,
+                    _altitudController.text,
+                    _tipoCultivoController.text,
+                    selectedMunicipioId!,
+                  );
+                }
+              },
+            )
+          : null,
       body: loading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
@@ -358,7 +257,7 @@ class _ParcelasPageState extends State<ParcelasPage>
                     child: Column(
                       children: [
                         Text(
-                          'Nueva Parcela',
+                          isEditing ? 'Editar Parcela' : 'Nueva Parcela',
                           style: GoogleFonts.montserrat(
                             color: natureGreen,
                             fontWeight: FontWeight.bold,
@@ -386,7 +285,8 @@ class _ParcelasPageState extends State<ParcelasPage>
                         ),
                         const SizedBox(height: 8),
                         TextField(
-                          controller: _hectareasController,
+                          controller: _areaController,
+                          keyboardType: TextInputType.number,
                           decoration: const InputDecoration(
                             labelText: 'Area (Ha)',
                             prefixIcon: Icon(
@@ -535,30 +435,48 @@ class _ParcelasPageState extends State<ParcelasPage>
                           },
                         ),
                         const SizedBox(height: 8),
-                        ElevatedButton.icon(
-                          icon: const Icon(
-                            Icons.add_circle_outline,
-                            color: Colors.white,
-                            size: 20,
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: natureGreen,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                icon: Icon(
+                                  isEditing
+                                      ? Icons.cancel
+                                      : Icons.add_circle_outline,
+                                  color: Colors.white,
+                                  size: 20,
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: isEditing
+                                      ? Colors.red
+                                      : natureGreen,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 10,
+                                    horizontal: 18,
+                                  ),
+                                ),
+                                label: Text(
+                                  isEditing
+                                      ? 'Cancelar edición'
+                                      : 'Agregar Parcela',
+                                  style: GoogleFonts.montserrat(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                onPressed: () {
+                                  if (isEditing) {
+                                    clearFormFields();
+                                  } else {
+                                    addParcela();
+                                  }
+                                },
+                              ),
                             ),
-                            padding: const EdgeInsets.symmetric(
-                              vertical: 10,
-                              horizontal: 18,
-                            ),
-                          ),
-                          label: Text(
-                            'Agregar Parcela',
-                            style: GoogleFonts.montserrat(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          onPressed: addParcela,
+                          ],
                         ),
                       ],
                     ),
@@ -628,7 +546,8 @@ class _ParcelasPageState extends State<ParcelasPage>
                                   ),
                                   onSelected: (value) {
                                     if (value == 'edit') {
-                                      showEditDialog(parcela);
+                                      startEditParcela(parcela);
+                                      // Borra los campos del formulario para edición
                                     } else if (value == 'delete') {
                                       deleteParcela(parcela['id_parcela']);
                                     }
