@@ -178,13 +178,13 @@ class _ProductoresPageState extends State<ProductoresPage>
               padding: const EdgeInsets.all(12.0),
               children: [
                 // IMAGEN SUPERIOR
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: Image.asset(
-                    'assets/images/productores_header.png', // Cambia según tu asset
-                    height: 120,
-                    width: double.infinity,
-                    fit: BoxFit.cover,
+                Center(
+                  child: CircleAvatar(
+                    radius: 60, // ajusta el tamaño según tu necesidad
+                    backgroundImage: AssetImage(
+                      'assets/images/productores_header.png',
+                    ),
+                    backgroundColor: Colors.transparent,
                   ),
                 ),
                 const SizedBox(height: 12),
