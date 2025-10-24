@@ -1,7 +1,119 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-import 'parcelas_page.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:hive/hive.dart';
+
+import 'parcelas_page.dart';
+
+// MODELO Hive + ADAPTER MANUAL (no codegen) --------------------------------
+@HiveType(typeId: 0)
+class Productor extends HiveObject {
+  @HiveField(0)
+  int? serverId; // id_productor en Supabase
+
+  @HiveField(1)
+  String nombre;
+
+  @HiveField(2)
+  String? email;
+
+  @HiveField(3)
+  String? telefono;
+
+  @HiveField(4)
+  String? cui;
+
+  @HiveField(5)
+  String? operation; // 'create' | 'update' | 'delete' | null
+
+  @HiveField(6)
+  String status; // 'pending' | 'synced'
+
+  @HiveField(7)
+  String updatedAt;
+
+  Productor({
+    this.serverId,
+    required this.nombre,
+    this.email,
+    this.telefono,
+    this.cui,
+    this.operation,
+    this.status = 'pending',
+    String? updatedAt,
+  }) : updatedAt = updatedAt ?? DateTime.now().toIso8601String();
+
+  Map<String, dynamic> toMap() => {
+    'id_productor': serverId,
+    'nombre': nombre,
+    'email': email,
+    'telefono': telefono,
+    'cui': cui,
+    'operation': operation,
+    'status': status,
+    'updatedAt': updatedAt,
+  };
+}
+
+class ProductorAdapter extends TypeAdapter<Productor> {
+  @override
+  final int typeId = 0;
+
+  @override
+  Productor read(BinaryReader reader) {
+    final numOfFields = reader.readByte();
+    final fields = <int, dynamic>{};
+    for (var i = 0; i < numOfFields; i++) {
+      final key = reader.readByte() as int;
+      final value = reader.read();
+      fields[key] = value;
+    }
+    final serverIdRaw = fields[0];
+    int? serverId;
+    if (serverIdRaw is int)
+      serverId = serverIdRaw;
+    else if (serverIdRaw is num)
+      serverId = serverIdRaw.toInt();
+    else
+      serverId = int.tryParse(serverIdRaw?.toString() ?? '');
+    return Productor(
+      serverId: serverId,
+      nombre: fields[1] as String,
+      email: fields[2] as String?,
+      telefono: fields[3] as String?,
+      cui: fields[4] as String?,
+      operation: fields[5] as String?,
+      status: fields[6] as String? ?? 'pending',
+      updatedAt: fields[7] as String?,
+    );
+  }
+
+  @override
+  void write(BinaryWriter writer, Productor obj) {
+    writer
+      ..writeByte(8)
+      ..writeByte(0)
+      ..write(obj.serverId)
+      ..writeByte(1)
+      ..write(obj.nombre)
+      ..writeByte(2)
+      ..write(obj.email)
+      ..writeByte(3)
+      ..write(obj.telefono)
+      ..writeByte(4)
+      ..write(obj.cui)
+      ..writeByte(5)
+      ..write(obj.operation)
+      ..writeByte(6)
+      ..write(obj.status)
+      ..writeByte(7)
+      ..write(obj.updatedAt);
+  }
+}
+// ---------------------------------------------------------------------------
 
 class ProductoresPage extends StatefulWidget {
   const ProductoresPage({super.key});
@@ -12,8 +124,8 @@ class ProductoresPage extends StatefulWidget {
 
 class _ProductoresPageState extends State<ProductoresPage>
     with SingleTickerProviderStateMixin {
-  List<dynamic> productores = [];
-  List<dynamic> filteredProductores = [];
+  List<Productor> productores = [];
+  List<Productor> filteredProductores = [];
   bool loading = false;
 
   final _nombreController = TextEditingController();
@@ -25,13 +137,20 @@ class _ProductoresPageState extends State<ProductoresPage>
   late AnimationController _animationController;
 
   bool isEditing = false;
-  int? editingProductorId;
+  Productor? editingProductor;
   bool showForm = false; // controla si el formulario está visible
+
+  // Hive box
+  late Box<Productor> _box;
+
+  // Conectividad
+  late StreamSubscription<dynamic> _connectivitySub;
+  dynamic _lastConnectivity;
+  bool _isOnline = false;
 
   @override
   void initState() {
     super.initState();
-    fetchProductores();
     _animationController = AnimationController(
       duration: const Duration(milliseconds: 700),
       vsync: this,
@@ -39,6 +158,9 @@ class _ProductoresPageState extends State<ProductoresPage>
     _searchController.addListener(() {
       filterProductores(_searchController.text);
     });
+
+    // Inicialización asíncrona que asegura box abierta antes de leer
+    _initBoxAndLoad();
   }
 
   @override
@@ -49,18 +171,19 @@ class _ProductoresPageState extends State<ProductoresPage>
     _telephoneController.dispose();
     _cuiController.dispose();
     _searchController.dispose();
+    _connectivitySub.cancel();
     super.dispose();
   }
 
-  Future<void> fetchProductores() async {
-    setState(() => loading = true);
-    final supabase = Supabase.instance.client;
-    final result = await supabase.from('productores').select();
+  void clearFormFields() {
     setState(() {
-      productores = result;
-      filteredProductores = result;
-      loading = false;
-      _animationController.forward(from: 0);
+      _nombreController.clear();
+      _emailController.clear();
+      _telephoneController.clear();
+      _cuiController.clear();
+      isEditing = false;
+      editingProductor = null;
+      showForm = false;
     });
   }
 
@@ -68,72 +191,113 @@ class _ProductoresPageState extends State<ProductoresPage>
     setState(() {
       final search = query.toLowerCase();
       filteredProductores = productores.where((p) {
-        final nombre = (p['nombre'] ?? '').toLowerCase();
-        final cui = (p['cui'] ?? '').toLowerCase();
+        final nombre = (p.nombre).toLowerCase();
+        final cui = (p.cui ?? '').toLowerCase();
         return nombre.contains(search) || cui.contains(search);
       }).toList();
     });
   }
 
-  void clearFormFields() {
-    _nombreController.clear();
-    _emailController.clear();
-    _telephoneController.clear();
-    _cuiController.clear();
-    isEditing = false;
-    editingProductorId = null;
-    setState(() {
-      showForm = false;
-    });
+  Future<void> loadLocalProductores() async {
+    final List<Productor> allProductores = _box.values.toList();
+
+    debugPrint(
+      'DEBUG: productores cargados en memoria (todos) = ${allProductores.length}',
+    );
+
+    productores = allProductores.where((p) => p.operation != 'delete').toList();
+
+    filterProductores(_searchController.text);
   }
 
   Future<void> addProductor() async {
-    final supabase = Supabase.instance.client;
-    await supabase.from('productores').insert({
-      'nombre': _nombreController.text,
-      'email': _emailController.text,
-      'telefono': _telephoneController.text,
-      'cui': _cuiController.text,
-    });
+    final connectivity = _normalizeConnectivity(
+      await Connectivity().checkConnectivity(),
+    );
+    final p = Productor(
+      serverId: null,
+      nombre: _nombreController.text,
+      email: _emailController.text.isEmpty ? null : _emailController.text,
+      telefono: _telephoneController.text.isEmpty
+          ? null
+          : _telephoneController.text,
+      cui: _cuiController.text.isEmpty ? null : _cuiController.text,
+      operation: 'create',
+      status: 'pending',
+    );
+    await _box.add(p);
+    await loadLocalProductores();
     clearFormFields();
-    fetchProductores();
+
+    if (connectivity != ConnectivityResult.none) {
+      await syncPending();
+      await fetchProductores();
+    }
   }
 
-  Future<void> updateProductor(
-    int id,
+  Future<void> updateProductorLocal(
+    Productor p,
     String nombre,
     String email,
     String telefono,
     String cui,
   ) async {
-    final supabase = Supabase.instance.client;
-    await supabase
-        .from('productores')
-        .update({
-          'nombre': nombre,
-          'email': email,
-          'telefono': telefono,
-          'cui': cui,
-        })
-        .eq('id_productor', id);
+    final connectivity = _normalizeConnectivity(
+      await Connectivity().checkConnectivity(),
+    );
+
+    p.nombre = nombre;
+    p.email = email.isEmpty ? null : email;
+    p.telefono = telefono.isEmpty ? null : telefono;
+    p.cui = cui.isEmpty ? null : cui;
+    if (p.serverId == null) {
+      p.operation = 'create';
+    } else {
+      p.operation = 'update';
+    }
+    p.status = 'pending';
+    p.updatedAt = DateTime.now().toIso8601String();
+    await p.save();
+
+    await loadLocalProductores();
     clearFormFields();
-    fetchProductores();
+
+    if (connectivity != ConnectivityResult.none) {
+      await syncPending();
+      await fetchProductores();
+    }
   }
 
-  Future<void> deleteProductor(int id) async {
-    final supabase = Supabase.instance.client;
-    await supabase.from('productores').delete().eq('id_productor', id);
-    fetchProductores();
+  Future<void> deleteProductorLocal(Productor p) async {
+    final connectivity = _normalizeConnectivity(
+      await Connectivity().checkConnectivity(),
+    );
+
+    if (p.serverId == null) {
+      await p.delete();
+    } else {
+      p.operation = 'delete';
+      p.status = 'pending';
+      p.updatedAt = DateTime.now().toIso8601String();
+      await p.save();
+    }
+
+    await loadLocalProductores();
+
+    if (connectivity != ConnectivityResult.none) {
+      await syncPending();
+      await fetchProductores();
+    }
   }
 
-  void startEditProductor(Map productor) {
+  void startEditProductor(Productor productor) {
     setState(() {
       isEditing = true;
-      editingProductorId = productor['id_productor'];
-      _nombreController.text = productor['nombre'] ?? '';
-      _emailController.text = productor['email'] ?? '';
-      _telephoneController.text = productor['telefono'] ?? '';
-      _cuiController.text = productor['cui'] ?? '';
+      editingProductor = productor;
+      _nombreController.text = productor.nombre;
+      _emailController.text = productor.email ?? '';
+      _telephoneController.text = productor.telefono ?? '';
+      _cuiController.text = productor.cui ?? '';
       showForm = true;
     });
   }
@@ -143,6 +307,232 @@ class _ProductoresPageState extends State<ProductoresPage>
     setState(() {
       showForm = true;
     });
+  }
+
+  Future<void> syncPending() async {
+    final connectivity = _normalizeConnectivity(
+      await Connectivity().checkConnectivity(),
+    );
+    if (connectivity == ConnectivityResult.none) return;
+
+    final supabase = Supabase.instance.client;
+    final pending = _box.values.where((p) => p.status == 'pending').toList();
+
+    for (final p in pending) {
+      final op = p.operation;
+      try {
+        if (op == 'create') {
+          final insertMap = {
+            'nombre': p.nombre,
+            'email': p.email,
+            'telefono': p.telefono,
+            'cui': p.cui,
+          };
+          dynamic res = await supabase
+              .from('productores')
+              .insert(insertMap)
+              .select();
+          dynamic server;
+          if (res is List && res.isNotEmpty) {
+            server = res.first;
+          } else if (res is Map) {
+            server = res;
+          } else {
+            server = null;
+          }
+          final serverId = server != null
+              ? (server['id_productor'] ?? server['id'])
+              : null;
+          if (serverId != null) {
+            p.serverId = serverId is int
+                ? serverId as int
+                : int.tryParse(serverId.toString());
+            p.operation = null;
+            p.status = 'synced';
+            await p.save();
+          }
+        } else if (op == 'update') {
+          final serverId = p.serverId;
+          if (serverId != null) {
+            await supabase
+                .from('productores')
+                .update({
+                  'nombre': p.nombre,
+                  'email': p.email,
+                  'telefono': p.telefono,
+                  'cui': p.cui,
+                })
+                .eq('id_productor', serverId);
+            p.operation = null;
+            p.status = 'synced';
+            await p.save();
+          } else {
+            p.operation = 'create';
+            await p.save();
+          }
+        } else if (op == 'delete') {
+          final serverId = p.serverId;
+          if (serverId != null) {
+            await supabase
+                .from('productores')
+                .delete()
+                .eq('id_productor', serverId);
+          }
+          await p.delete();
+        } else {
+          p.status = 'synced';
+          p.operation = null;
+          await p.save();
+        }
+      } catch (e, st) {
+        debugPrint(
+          'Error sincronizando registro local key=${p.key} op=$op: $e',
+        );
+        debugPrint('$st');
+        // dejar como pending para reintentos
+      }
+    }
+
+    await loadLocalProductores();
+  }
+
+  Future<void> _initBoxAndLoad() async {
+    // Registrar adapter si no está registrado (safe)
+    try {
+      if (!Hive.isAdapterRegistered(ProductorAdapter().typeId)) {
+        Hive.registerAdapter(ProductorAdapter());
+      }
+    } catch (_) {}
+
+    // Abrir box si no está abierta
+    if (!Hive.isBoxOpen('productores')) {
+      await Hive.openBox<Productor>('productores');
+    }
+    _box = Hive.box<Productor>('productores');
+
+    // Cargar locales al instante para mostrar datos cacheados
+    await loadLocalProductores();
+
+    // Inicializar conectividad y suscribir
+    final conn = Connectivity();
+    _lastConnectivity = await conn.checkConnectivity();
+    _isOnline =
+        _normalizeConnectivity(_lastConnectivity) != ConnectivityResult.none;
+    setState(() {});
+
+    _connectivitySub = conn.onConnectivityChanged.listen((result) async {
+      final prev = _normalizeConnectivity(_lastConnectivity);
+      final now = _normalizeConnectivity(result);
+      final wasOnline = _isOnline;
+      _isOnline = now != ConnectivityResult.none;
+      if (wasOnline != _isOnline) setState(() {});
+      if (prev == ConnectivityResult.none && now != ConnectivityResult.none) {
+        // recobró conectividad: sincroniza pendientes y descarga remotos
+        await syncPending();
+        await fetchProductores();
+      }
+      _lastConnectivity = result;
+    });
+
+    // Si hay internet al inicio, sincronizamos y descargamos remotos
+    if (_isOnline) {
+      await syncPending();
+      await fetchProductores();
+    }
+  }
+
+  ConnectivityResult _normalizeConnectivity(dynamic value) {
+    try {
+      if (value == null) return ConnectivityResult.none;
+      if (value is ConnectivityResult) return value;
+      if (value is List && value.isNotEmpty) {
+        final first = value.first;
+        if (first is ConnectivityResult) return first;
+        if (first is String) {
+          final s = first.toLowerCase();
+          if (s.contains('wifi')) return ConnectivityResult.wifi;
+          if (s.contains('mobile') || s.contains('cellular'))
+            return ConnectivityResult.mobile;
+        }
+      }
+    } catch (_) {}
+    return ConnectivityResult.none;
+  }
+
+  Future<void> fetchProductores() async {
+    setState(() => loading = true);
+    final online =
+        _normalizeConnectivity(await Connectivity().checkConnectivity()) !=
+        ConnectivityResult.none;
+    if (!online) {
+      // offline: ya cargamos locales
+      setState(() {
+        loading = false;
+        _animationController.forward(from: 0);
+      });
+      return;
+    }
+
+    try {
+      final supabase = Supabase.instance.client;
+      final result = await supabase.from('productores').select();
+      final List<dynamic> remote = (result is List) ? result : [];
+
+      // Mapear serverId -> local existente
+      final localByServerId = <int, Productor>{};
+      for (final p in _box.values) {
+        if (p.serverId != null) localByServerId[p.serverId!] = p;
+      }
+
+      for (final r in remote) {
+        if (r is! Map) continue;
+        final rawId = r['id_productor'] ?? r['id'];
+        final serverId = (rawId is int)
+            ? rawId
+            : int.tryParse(rawId?.toString() ?? '');
+        if (serverId == null) continue;
+
+        final nombre = (r['nombre'] ?? '').toString();
+        final email = r['email']?.toString();
+        final telefono = r['telefono']?.toString();
+        final cui = r['cui']?.toString();
+
+        if (localByServerId.containsKey(serverId)) {
+          final local = localByServerId[serverId]!;
+          // Si tiene operación pendiente local, no sobreescribimos
+          if (local.operation == null) {
+            local.nombre = nombre;
+            local.email = email;
+            local.telefono = telefono;
+            local.cui = cui;
+            local.status = 'synced';
+            await local.save();
+          }
+        } else {
+          final np = Productor(
+            serverId: serverId,
+            nombre: nombre,
+            email: email,
+            telefono: telefono,
+            cui: cui,
+            status: 'synced',
+            operation: null,
+          );
+          await _box.add(np);
+        }
+      }
+
+      await loadLocalProductores();
+    } catch (e, st) {
+      debugPrint('Error fetchProductores: $e');
+      debugPrint('$st');
+      await loadLocalProductores();
+    } finally {
+      setState(() {
+        loading = false;
+        _animationController.forward(from: 0);
+      });
+    }
   }
 
   @override
@@ -163,6 +553,28 @@ class _ProductoresPageState extends State<ProductoresPage>
           ),
         ),
         elevation: 0,
+        actions: [
+          IconButton(
+            icon: Icon(
+              Icons.sync,
+              color: _isOnline ? Colors.white : Colors.white54,
+            ),
+            tooltip: _isOnline ? 'Actualizar datos' : 'Sin conexión',
+            onPressed: _isOnline
+                ? () async {
+                    setState(() => loading = true);
+                    await syncPending();
+                    await fetchProductores();
+                    setState(() => loading = false);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Actualización completada.'),
+                      ),
+                    );
+                  }
+                : null,
+          ),
+        ],
       ),
       floatingActionButton: showForm
           ? null
@@ -181,7 +593,7 @@ class _ProductoresPageState extends State<ProductoresPage>
                 Center(
                   child: CircleAvatar(
                     radius: 60, // ajusta el tamaño según tu necesidad
-                    backgroundImage: AssetImage(
+                    backgroundImage: const AssetImage(
                       'assets/images/productores_header.png',
                     ),
                     backgroundColor: Colors.transparent,
@@ -338,10 +750,9 @@ class _ProductoresPageState extends State<ProductoresPage>
                                     ),
                                   ),
                                   onPressed: () {
-                                    if (isEditing &&
-                                        editingProductorId != null) {
-                                      updateProductor(
-                                        editingProductorId!,
+                                    if (isEditing && editingProductor != null) {
+                                      updateProductorLocal(
+                                        editingProductor!,
                                         _nombreController.text,
                                         _emailController.text,
                                         _telephoneController.text,
@@ -421,7 +832,7 @@ class _ProductoresPageState extends State<ProductoresPage>
                                   child: Icon(Icons.person, color: natureGreen),
                                 ),
                                 title: Text(
-                                  productor['nombre'] ?? '',
+                                  productor.nombre,
                                   style: GoogleFonts.montserrat(
                                     color: natureGreen,
                                     fontWeight: FontWeight.bold,
@@ -439,7 +850,7 @@ class _ProductoresPageState extends State<ProductoresPage>
                                         ),
                                         const SizedBox(width: 4),
                                         Text(
-                                          productor['email'] ?? '',
+                                          productor.email ?? '',
                                           style: GoogleFonts.montserrat(
                                             color: Colors.green[800],
                                             fontSize: 13,
@@ -456,7 +867,7 @@ class _ProductoresPageState extends State<ProductoresPage>
                                         ),
                                         const SizedBox(width: 4),
                                         Text(
-                                          productor['cui'] ?? '',
+                                          productor.cui ?? '',
                                           style: GoogleFonts.montserrat(
                                             color: Colors.green[800],
                                             fontSize: 13,
@@ -464,6 +875,25 @@ class _ProductoresPageState extends State<ProductoresPage>
                                         ),
                                       ],
                                     ),
+                                    if ((productor.status) == 'pending')
+                                      Row(
+                                        children: [
+                                          const SizedBox(width: 4),
+                                          Icon(
+                                            Icons.sync,
+                                            size: 14,
+                                            color: Colors.orange,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            'Pendiente de sincronizar',
+                                            style: GoogleFonts.montserrat(
+                                              color: Colors.orange,
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                   ],
                                 ),
                                 trailing: PopupMenuButton<String>(
@@ -475,18 +905,15 @@ class _ProductoresPageState extends State<ProductoresPage>
                                     if (value == 'edit') {
                                       startEditProductor(productor);
                                     } else if (value == 'delete') {
-                                      deleteProductor(
-                                        productor['id_productor'],
-                                      );
+                                      deleteProductorLocal(productor);
                                     } else if (value == 'parcelas') {
                                       Navigator.push(
                                         context,
                                         MaterialPageRoute(
                                           builder: (_) => ParcelasPage(
                                             productorId:
-                                                productor['id_productor'],
-                                            nombreProductor:
-                                                productor['nombre'] ?? '',
+                                                productor.serverId ?? 0,
+                                            nombreProductor: productor.nombre,
                                           ),
                                         ),
                                       );
