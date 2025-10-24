@@ -138,12 +138,10 @@ class _ProductoresPageState extends State<ProductoresPage>
 
   bool isEditing = false;
   Productor? editingProductor;
-  bool showForm = false; // controla si el formulario está visible
+  bool showForm = false;
 
-  // Hive box
   late Box<Productor> _box;
 
-  // Conectividad
   late StreamSubscription<dynamic> _connectivitySub;
   dynamic _lastConnectivity;
   bool _isOnline = false;
@@ -159,7 +157,6 @@ class _ProductoresPageState extends State<ProductoresPage>
       filterProductores(_searchController.text);
     });
 
-    // Inicialización asíncrona que asegura box abierta antes de leer
     _initBoxAndLoad();
   }
 
@@ -188,32 +185,26 @@ class _ProductoresPageState extends State<ProductoresPage>
   }
 
   void filterProductores(String query) {
-    setState(() {
-      final search = query.toLowerCase();
-      filteredProductores = productores.where((p) {
-        final nombre = (p.nombre).toLowerCase();
-        final cui = (p.cui ?? '').toLowerCase();
-        return nombre.contains(search) || cui.contains(search);
-      }).toList();
-    });
+    final search = query.toLowerCase();
+    // No llames a setState aquí, deja que loadLocalProductores lo controle
+    filteredProductores = productores.where((p) {
+      final nombre = (p.nombre).toLowerCase();
+      final cui = (p.cui ?? '').toLowerCase();
+      return nombre.contains(search) || cui.contains(search);
+    }).toList();
   }
 
   Future<void> loadLocalProductores() async {
     final List<Productor> allProductores = _box.values.toList();
-
-    debugPrint(
-      'DEBUG: productores cargados en memoria (todos) = ${allProductores.length}',
-    );
-
     productores = allProductores.where((p) => p.operation != 'delete').toList();
 
-    filterProductores(_searchController.text);
+    // Filtra y luego actualiza la UI en un solo paso
+    setState(() {
+      filterProductores(_searchController.text);
+    });
   }
 
   Future<void> addProductor() async {
-    final connectivity = _normalizeConnectivity(
-      await Connectivity().checkConnectivity(),
-    );
     final p = Productor(
       serverId: null,
       nombre: _nombreController.text,
@@ -229,9 +220,8 @@ class _ProductoresPageState extends State<ProductoresPage>
     await loadLocalProductores();
     clearFormFields();
 
-    if (connectivity != ConnectivityResult.none) {
+    if (_isOnline) {
       await syncPending();
-      await fetchProductores();
     }
   }
 
@@ -242,10 +232,6 @@ class _ProductoresPageState extends State<ProductoresPage>
     String telefono,
     String cui,
   ) async {
-    final connectivity = _normalizeConnectivity(
-      await Connectivity().checkConnectivity(),
-    );
-
     p.nombre = nombre;
     p.email = email.isEmpty ? null : email;
     p.telefono = telefono.isEmpty ? null : telefono;
@@ -262,17 +248,12 @@ class _ProductoresPageState extends State<ProductoresPage>
     await loadLocalProductores();
     clearFormFields();
 
-    if (connectivity != ConnectivityResult.none) {
+    if (_isOnline) {
       await syncPending();
-      await fetchProductores();
     }
   }
 
   Future<void> deleteProductorLocal(Productor p) async {
-    final connectivity = _normalizeConnectivity(
-      await Connectivity().checkConnectivity(),
-    );
-
     if (p.serverId == null) {
       await p.delete();
     } else {
@@ -284,9 +265,8 @@ class _ProductoresPageState extends State<ProductoresPage>
 
     await loadLocalProductores();
 
-    if (connectivity != ConnectivityResult.none) {
+    if (_isOnline) {
       await syncPending();
-      await fetchProductores();
     }
   }
 
@@ -310,10 +290,7 @@ class _ProductoresPageState extends State<ProductoresPage>
   }
 
   Future<void> syncPending() async {
-    final connectivity = _normalizeConnectivity(
-      await Connectivity().checkConnectivity(),
-    );
-    if (connectivity == ConnectivityResult.none) return;
+    if (!_isOnline) return;
 
     final supabase = Supabase.instance.client;
     final pending = _box.values.where((p) => p.status == 'pending').toList();
@@ -328,29 +305,16 @@ class _ProductoresPageState extends State<ProductoresPage>
             'telefono': p.telefono,
             'cui': p.cui,
           };
-          dynamic res = await supabase
+          final res = await supabase
               .from('productores')
               .insert(insertMap)
-              .select();
-          dynamic server;
-          if (res is List && res.isNotEmpty) {
-            server = res.first;
-          } else if (res is Map) {
-            server = res;
-          } else {
-            server = null;
-          }
-          final serverId = server != null
-              ? (server['id_productor'] ?? server['id'])
-              : null;
-          if (serverId != null) {
-            p.serverId = serverId is int
-                ? serverId as int
-                : int.tryParse(serverId.toString());
-            p.operation = null;
-            p.status = 'synced';
-            await p.save();
-          }
+              .select()
+              .single();
+
+          p.serverId = res['id_productor'];
+          p.operation = null;
+          p.status = 'synced';
+          await p.save();
         } else if (op == 'update') {
           final serverId = p.serverId;
           if (serverId != null) {
@@ -389,7 +353,6 @@ class _ProductoresPageState extends State<ProductoresPage>
           'Error sincronizando registro local key=${p.key} op=$op: $e',
         );
         debugPrint('$st');
-        // dejar como pending para reintentos
       }
     }
 
@@ -397,23 +360,19 @@ class _ProductoresPageState extends State<ProductoresPage>
   }
 
   Future<void> _initBoxAndLoad() async {
-    // Registrar adapter si no está registrado (safe)
     try {
       if (!Hive.isAdapterRegistered(ProductorAdapter().typeId)) {
         Hive.registerAdapter(ProductorAdapter());
       }
     } catch (_) {}
 
-    // Abrir box si no está abierta
     if (!Hive.isBoxOpen('productores')) {
       await Hive.openBox<Productor>('productores');
     }
     _box = Hive.box<Productor>('productores');
 
-    // Cargar locales al instante para mostrar datos cacheados
     await loadLocalProductores();
 
-    // Inicializar conectividad y suscribir
     final conn = Connectivity();
     _lastConnectivity = await conn.checkConnectivity();
     _isOnline =
@@ -421,23 +380,19 @@ class _ProductoresPageState extends State<ProductoresPage>
     setState(() {});
 
     _connectivitySub = conn.onConnectivityChanged.listen((result) async {
-      final prev = _normalizeConnectivity(_lastConnectivity);
       final now = _normalizeConnectivity(result);
-      final wasOnline = _isOnline;
-      _isOnline = now != ConnectivityResult.none;
-      if (wasOnline != _isOnline) setState(() {});
-      if (prev == ConnectivityResult.none && now != ConnectivityResult.none) {
-        // recobró conectividad: sincroniza pendientes y descarga remotos
-        await syncPending();
-        await fetchProductores();
+      setState(() {
+        _isOnline = now != ConnectivityResult.none;
+      });
+
+      if (_isOnline) {
+        await manualRefresh();
       }
       _lastConnectivity = result;
     });
 
-    // Si hay internet al inicio, sincronizamos y descargamos remotos
     if (_isOnline) {
-      await syncPending();
-      await fetchProductores();
+      await manualRefresh();
     }
   }
 
@@ -460,16 +415,8 @@ class _ProductoresPageState extends State<ProductoresPage>
   }
 
   Future<void> fetchProductores() async {
-    setState(() => loading = true);
-    final online =
-        _normalizeConnectivity(await Connectivity().checkConnectivity()) !=
-        ConnectivityResult.none;
-    if (!online) {
-      // offline: ya cargamos locales
-      setState(() {
-        loading = false;
-        _animationController.forward(from: 0);
-      });
+    if (!_isOnline) {
+      await loadLocalProductores();
       return;
     }
 
@@ -478,7 +425,6 @@ class _ProductoresPageState extends State<ProductoresPage>
       final result = await supabase.from('productores').select();
       final List<dynamic> remote = (result is List) ? result : [];
 
-      // Mapear serverId -> local existente
       final localByServerId = <int, Productor>{};
       for (final p in _box.values) {
         if (p.serverId != null) localByServerId[p.serverId!] = p;
@@ -499,7 +445,6 @@ class _ProductoresPageState extends State<ProductoresPage>
 
         if (localByServerId.containsKey(serverId)) {
           final local = localByServerId[serverId]!;
-          // Si tiene operación pendiente local, no sobreescribimos
           if (local.operation == null) {
             local.nombre = nombre;
             local.email = email;
@@ -521,17 +466,34 @@ class _ProductoresPageState extends State<ProductoresPage>
           await _box.add(np);
         }
       }
-
-      await loadLocalProductores();
     } catch (e, st) {
       debugPrint('Error fetchProductores: $e');
       debugPrint('$st');
-      await loadLocalProductores();
     } finally {
-      setState(() {
-        loading = false;
-        _animationController.forward(from: 0);
-      });
+      await loadLocalProductores();
+    }
+  }
+
+  Future<void> manualRefresh() async {
+    setState(() => loading = true);
+    if (_isOnline) {
+      await syncPending();
+      await fetchProductores();
+    } else {
+      await loadLocalProductores();
+    }
+    if (mounted) {
+      setState(() => loading = false);
+      _animationController.forward(from: 0);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _isOnline
+                ? 'Actualización completada.'
+                : 'Mostrando datos locales.',
+          ),
+        ),
+      );
     }
   }
 
@@ -560,19 +522,7 @@ class _ProductoresPageState extends State<ProductoresPage>
               color: _isOnline ? Colors.white : Colors.white54,
             ),
             tooltip: _isOnline ? 'Actualizar datos' : 'Sin conexión',
-            onPressed: _isOnline
-                ? () async {
-                    setState(() => loading = true);
-                    await syncPending();
-                    await fetchProductores();
-                    setState(() => loading = false);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Actualización completada.'),
-                      ),
-                    );
-                  }
-                : null,
+            onPressed: manualRefresh,
           ),
         ],
       ),
@@ -586,411 +536,425 @@ class _ProductoresPageState extends State<ProductoresPage>
             ),
       body: loading
           ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(12.0),
-              children: [
-                // IMAGEN SUPERIOR
-                Center(
-                  child: CircleAvatar(
-                    radius: 60, // ajusta el tamaño según tu necesidad
-                    backgroundImage: const AssetImage(
-                      'assets/images/productores_header.png',
-                    ),
-                    backgroundColor: Colors.transparent,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                // BUSCADOR
-                TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    labelText: 'Buscar por CUI o Nombre',
-                    prefixIcon: Icon(Icons.search, color: natureGreen),
-                    filled: true,
-                    fillColor: Colors.white,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      vertical: 8,
-                      horizontal: 8,
+          : RefreshIndicator(
+              onRefresh: manualRefresh,
+              child: ListView(
+                padding: const EdgeInsets.all(12.0),
+                children: [
+                  Center(
+                    child: CircleAvatar(
+                      radius: 60,
+                      backgroundImage: const AssetImage(
+                        'assets/images/productores_header.png',
+                      ),
+                      backgroundColor: Colors.transparent,
                     ),
                   ),
-                ),
-                const SizedBox(height: 10),
-                if (showForm)
-                  Card(
-                    elevation: 2,
-                    color: accentNature,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      labelText: 'Buscar por CUI o Nombre',
+                      prefixIcon: Icon(Icons.search, color: natureGreen),
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
                         vertical: 8,
-                      ),
-                      child: Column(
-                        children: [
-                          Text(
-                            isEditing ? 'Editar Productor' : 'Nuevo Productor',
-                            style: GoogleFonts.montserrat(
-                              color: natureGreen,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          TextField(
-                            controller: _nombreController,
-                            decoration: const InputDecoration(
-                              labelText: 'Nombre',
-                              prefixIcon: Icon(
-                                Icons.person,
-                                color: Colors.green,
-                                size: 20,
-                              ),
-                              filled: true,
-                              fillColor: Colors.white,
-                              border: OutlineInputBorder(),
-                              contentPadding: EdgeInsets.symmetric(
-                                vertical: 8,
-                                horizontal: 8,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          TextField(
-                            controller: _emailController,
-                            decoration: const InputDecoration(
-                              labelText: 'Email',
-                              prefixIcon: Icon(
-                                Icons.email,
-                                color: Colors.green,
-                                size: 20,
-                              ),
-                              filled: true,
-                              fillColor: Colors.white,
-                              border: OutlineInputBorder(),
-                              contentPadding: EdgeInsets.symmetric(
-                                vertical: 8,
-                                horizontal: 8,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          TextField(
-                            controller: _telephoneController,
-                            decoration: const InputDecoration(
-                              labelText: 'Teléfono',
-                              prefixIcon: Icon(
-                                Icons.phone,
-                                color: Colors.green,
-                                size: 20,
-                              ),
-                              filled: true,
-                              fillColor: Colors.white,
-                              border: OutlineInputBorder(),
-                              contentPadding: EdgeInsets.symmetric(
-                                vertical: 8,
-                                horizontal: 8,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          TextField(
-                            controller: _cuiController,
-                            decoration: const InputDecoration(
-                              labelText: 'CUI',
-                              prefixIcon: Icon(
-                                Icons.badge,
-                                color: Colors.green,
-                                size: 15,
-                              ),
-                              filled: true,
-                              fillColor: Colors.white,
-                              border: OutlineInputBorder(),
-                              contentPadding: EdgeInsets.symmetric(
-                                vertical: 8,
-                                horizontal: 8,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: ElevatedButton.icon(
-                                  icon: Icon(
-                                    isEditing
-                                        ? Icons.edit
-                                        : Icons.add_circle_outline,
-                                    color: Colors.white,
-                                    size: 20,
-                                  ),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: isEditing
-                                        ? Colors.orange
-                                        : natureGreen,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 10,
-                                      horizontal: 18,
-                                    ),
-                                  ),
-                                  label: Text(
-                                    isEditing
-                                        ? 'Guardar edición'
-                                        : 'Agregar Productor',
-                                    style: GoogleFonts.montserrat(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  onPressed: () {
-                                    if (isEditing && editingProductor != null) {
-                                      updateProductorLocal(
-                                        editingProductor!,
-                                        _nombreController.text,
-                                        _emailController.text,
-                                        _telephoneController.text,
-                                        _cuiController.text,
-                                      );
-                                    } else {
-                                      addProductor();
-                                    }
-                                  },
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: ElevatedButton.icon(
-                                  icon: Icon(
-                                    Icons.cancel,
-                                    color: Colors.white,
-                                    size: 20,
-                                  ),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.red,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 10,
-                                      horizontal: 18,
-                                    ),
-                                  ),
-                                  label: Text(
-                                    'Cancelar',
-                                    style: GoogleFonts.montserrat(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  onPressed: clearFormFields,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
+                        horizontal: 8,
                       ),
                     ),
                   ),
-                const SizedBox(height: 10),
-                AnimatedBuilder(
-                  animation: _animationController,
-                  builder: (context, child) {
-                    return Column(
-                      children: [
-                        ...filteredProductores.asMap().entries.map((entry) {
-                          final i = entry.key;
-                          final productor = entry.value;
-                          return FadeTransition(
-                            opacity: CurvedAnimation(
-                              parent: _animationController,
-                              curve: Interval(
-                                i /
-                                    (filteredProductores.isEmpty
-                                        ? 1
-                                        : filteredProductores.length),
-                                1.0,
-                                curve: Curves.easeIn,
-                              ),
-                            ),
-                            child: Card(
-                              margin: const EdgeInsets.symmetric(vertical: 2),
-                              elevation: 1,
-                              color: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(5),
-                              ),
-                              child: ListTile(
-                                leading: CircleAvatar(
-                                  backgroundColor: accentNature,
-                                  child: Icon(Icons.person, color: natureGreen),
-                                ),
-                                title: Text(
-                                  productor.nombre,
-                                  style: GoogleFonts.montserrat(
-                                    color: natureGreen,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                subtitle: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Icon(
-                                          Icons.email,
-                                          size: 16,
-                                          color: Colors.green[600],
-                                        ),
-                                        const SizedBox(width: 4),
-                                        Text(
-                                          productor.email ?? '',
-                                          style: GoogleFonts.montserrat(
-                                            color: Colors.green[800],
-                                            fontSize: 13,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    Row(
-                                      children: [
-                                        Icon(
-                                          Icons.badge,
-                                          size: 16,
-                                          color: Colors.green[600],
-                                        ),
-                                        const SizedBox(width: 4),
-                                        Text(
-                                          productor.cui ?? '',
-                                          style: GoogleFonts.montserrat(
-                                            color: Colors.green[800],
-                                            fontSize: 13,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    if ((productor.status) == 'pending')
-                                      Row(
-                                        children: [
-                                          const SizedBox(width: 4),
-                                          Icon(
-                                            Icons.sync,
-                                            size: 14,
-                                            color: Colors.orange,
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            'Pendiente de sincronizar',
-                                            style: GoogleFonts.montserrat(
-                                              color: Colors.orange,
-                                              fontSize: 12,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                  ],
-                                ),
-                                trailing: PopupMenuButton<String>(
-                                  icon: Icon(
-                                    Icons.more_vert,
-                                    color: natureGreen,
-                                  ),
-                                  onSelected: (value) {
-                                    if (value == 'edit') {
-                                      startEditProductor(productor);
-                                    } else if (value == 'delete') {
-                                      deleteProductorLocal(productor);
-                                    } else if (value == 'parcelas') {
-                                      Navigator.push(
-                                        context,
-                                        MaterialPageRoute(
-                                          builder: (_) => ParcelasPage(
-                                            productorId:
-                                                productor.serverId ?? 0,
-                                            nombreProductor: productor.nombre,
-                                          ),
-                                        ),
-                                      );
-                                    }
-                                  },
-                                  itemBuilder: (context) => [
-                                    PopupMenuItem(
-                                      value: 'edit',
-                                      child: Row(
-                                        children: [
-                                          Icon(Icons.edit, color: natureGreen),
-                                          const SizedBox(width: 8),
-                                          Text(
-                                            'Editar',
-                                            style: GoogleFonts.montserrat(
-                                              color: natureGreen,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    PopupMenuItem(
-                                      value: 'delete',
-                                      child: Row(
-                                        children: [
-                                          Icon(Icons.delete, color: Colors.red),
-                                          const SizedBox(width: 8),
-                                          Text(
-                                            'Eliminar',
-                                            style: GoogleFonts.montserrat(
-                                              color: Colors.red,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    PopupMenuItem(
-                                      value: 'parcelas',
-                                      child: Row(
-                                        children: [
-                                          Icon(
-                                            Icons.landscape,
-                                            color: natureGreen,
-                                          ),
-                                          const SizedBox(width: 8),
-                                          Text(
-                                            'Ver Parcelas',
-                                            style: GoogleFonts.montserrat(
-                                              color: natureGreen,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          );
-                        }),
-                        if (filteredProductores.isEmpty)
-                          Padding(
-                            padding: const EdgeInsets.all(20),
-                            child: Text(
-                              'No se encontraron productores.',
+                  const SizedBox(height: 10),
+                  if (showForm)
+                    Card(
+                      elevation: 2,
+                      color: accentNature,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        child: Column(
+                          children: [
+                            Text(
+                              isEditing
+                                  ? 'Editar Productor'
+                                  : 'Nuevo Productor',
                               style: GoogleFonts.montserrat(
-                                color: Colors.grey,
+                                color: natureGreen,
+                                fontWeight: FontWeight.bold,
                                 fontSize: 16,
                               ),
-                              textAlign: TextAlign.center,
                             ),
-                          ),
-                      ],
-                    );
-                  },
-                ),
-              ],
+                            const SizedBox(height: 6),
+                            TextField(
+                              controller: _nombreController,
+                              decoration: const InputDecoration(
+                                labelText: 'Nombre',
+                                prefixIcon: Icon(
+                                  Icons.person,
+                                  color: Colors.green,
+                                  size: 20,
+                                ),
+                                filled: true,
+                                fillColor: Colors.white,
+                                border: OutlineInputBorder(),
+                                contentPadding: EdgeInsets.symmetric(
+                                  vertical: 8,
+                                  horizontal: 8,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            TextField(
+                              controller: _emailController,
+                              decoration: const InputDecoration(
+                                labelText: 'Email',
+                                prefixIcon: Icon(
+                                  Icons.email,
+                                  color: Colors.green,
+                                  size: 20,
+                                ),
+                                filled: true,
+                                fillColor: Colors.white,
+                                border: OutlineInputBorder(),
+                                contentPadding: EdgeInsets.symmetric(
+                                  vertical: 8,
+                                  horizontal: 8,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            TextField(
+                              controller: _telephoneController,
+                              decoration: const InputDecoration(
+                                labelText: 'Teléfono',
+                                prefixIcon: Icon(
+                                  Icons.phone,
+                                  color: Colors.green,
+                                  size: 20,
+                                ),
+                                filled: true,
+                                fillColor: Colors.white,
+                                border: OutlineInputBorder(),
+                                contentPadding: EdgeInsets.symmetric(
+                                  vertical: 8,
+                                  horizontal: 8,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            TextField(
+                              controller: _cuiController,
+                              decoration: const InputDecoration(
+                                labelText: 'CUI',
+                                prefixIcon: Icon(
+                                  Icons.badge,
+                                  color: Colors.green,
+                                  size: 15,
+                                ),
+                                filled: true,
+                                fillColor: Colors.white,
+                                border: OutlineInputBorder(),
+                                contentPadding: EdgeInsets.symmetric(
+                                  vertical: 8,
+                                  horizontal: 8,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    icon: Icon(
+                                      isEditing
+                                          ? Icons.edit
+                                          : Icons.add_circle_outline,
+                                      color: Colors.white,
+                                      size: 20,
+                                    ),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: isEditing
+                                          ? Colors.orange
+                                          : natureGreen,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 10,
+                                        horizontal: 18,
+                                      ),
+                                    ),
+                                    label: Text(
+                                      isEditing
+                                          ? 'Guardar edición'
+                                          : 'Agregar Productor',
+                                      style: GoogleFonts.montserrat(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    onPressed: () {
+                                      if (isEditing &&
+                                          editingProductor != null) {
+                                        updateProductorLocal(
+                                          editingProductor!,
+                                          _nombreController.text,
+                                          _emailController.text,
+                                          _telephoneController.text,
+                                          _cuiController.text,
+                                        );
+                                      } else {
+                                        addProductor();
+                                      }
+                                    },
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    icon: Icon(
+                                      Icons.cancel,
+                                      color: Colors.white,
+                                      size: 20,
+                                    ),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.red,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 10,
+                                        horizontal: 18,
+                                      ),
+                                    ),
+                                    label: Text(
+                                      'Cancelar',
+                                      style: GoogleFonts.montserrat(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    onPressed: clearFormFields,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 10),
+                  AnimatedBuilder(
+                    animation: _animationController,
+                    builder: (context, child) {
+                      return Column(
+                        children: [
+                          ...filteredProductores.asMap().entries.map((entry) {
+                            final i = entry.key;
+                            final productor = entry.value;
+                            return FadeTransition(
+                              opacity: CurvedAnimation(
+                                parent: _animationController,
+                                curve: Interval(
+                                  i /
+                                      (filteredProductores.isEmpty
+                                          ? 1
+                                          : filteredProductores.length),
+                                  1.0,
+                                  curve: Curves.easeIn,
+                                ),
+                              ),
+                              child: Card(
+                                margin: const EdgeInsets.symmetric(vertical: 2),
+                                elevation: 1,
+                                color: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(5),
+                                ),
+                                child: ListTile(
+                                  leading: CircleAvatar(
+                                    backgroundColor: accentNature,
+                                    child: Icon(
+                                      Icons.person,
+                                      color: natureGreen,
+                                    ),
+                                  ),
+                                  title: Text(
+                                    productor.nombre,
+                                    style: GoogleFonts.montserrat(
+                                      color: natureGreen,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  subtitle: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Icon(
+                                            Icons.email,
+                                            size: 16,
+                                            color: Colors.green[600],
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            productor.email ?? '',
+                                            style: GoogleFonts.montserrat(
+                                              color: Colors.green[800],
+                                              fontSize: 13,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      Row(
+                                        children: [
+                                          Icon(
+                                            Icons.badge,
+                                            size: 16,
+                                            color: Colors.green[600],
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            productor.cui ?? '',
+                                            style: GoogleFonts.montserrat(
+                                              color: Colors.green[800],
+                                              fontSize: 13,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      if ((productor.status) == 'pending')
+                                        Row(
+                                          children: [
+                                            const SizedBox(width: 4),
+                                            Icon(
+                                              Icons.sync,
+                                              size: 14,
+                                              color: Colors.orange,
+                                            ),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              'Pendiente de sincronizar',
+                                              style: GoogleFonts.montserrat(
+                                                color: Colors.orange,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                    ],
+                                  ),
+                                  trailing: PopupMenuButton<String>(
+                                    icon: Icon(
+                                      Icons.more_vert,
+                                      color: natureGreen,
+                                    ),
+                                    onSelected: (value) {
+                                      if (value == 'edit') {
+                                        startEditProductor(productor);
+                                      } else if (value == 'delete') {
+                                        deleteProductorLocal(productor);
+                                      } else if (value == 'parcelas') {
+                                        Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (_) => ParcelasPage(
+                                              productorId:
+                                                  productor.serverId ?? 0,
+                                              nombreProductor: productor.nombre,
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                    },
+                                    itemBuilder: (context) => [
+                                      PopupMenuItem(
+                                        value: 'edit',
+                                        child: Row(
+                                          children: [
+                                            Icon(
+                                              Icons.edit,
+                                              color: natureGreen,
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              'Editar',
+                                              style: GoogleFonts.montserrat(
+                                                color: natureGreen,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      PopupMenuItem(
+                                        value: 'delete',
+                                        child: Row(
+                                          children: [
+                                            Icon(
+                                              Icons.delete,
+                                              color: Colors.red,
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              'Eliminar',
+                                              style: GoogleFonts.montserrat(
+                                                color: Colors.red,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      PopupMenuItem(
+                                        value: 'parcelas',
+                                        child: Row(
+                                          children: [
+                                            Icon(
+                                              Icons.landscape,
+                                              color: natureGreen,
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              'Ver Parcelas',
+                                              style: GoogleFonts.montserrat(
+                                                color: natureGreen,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          }),
+                          if (filteredProductores.isEmpty && !loading)
+                            Padding(
+                              padding: const EdgeInsets.all(20),
+                              child: Text(
+                                'No se encontraron productores.',
+                                style: GoogleFonts.montserrat(
+                                  color: Colors.grey,
+                                  fontSize: 16,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              ),
             ),
     );
   }

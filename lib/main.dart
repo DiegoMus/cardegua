@@ -12,6 +12,7 @@ import 'parcelas_page.dart' show ParcelaAdapter;
 import 'auth_page.dart';
 import 'productores_page.dart';
 import 'parcelas_page.dart';
+import 'splash_page.dart';
 
 Future<void> main() async {
   // Ejecutar toda la inicialización en la misma zone donde luego llamaremos runApp.
@@ -82,7 +83,7 @@ class _MyAppState extends State<MyApp> {
         ),
         fontFamily: 'Montserrat',
       ),
-      home: const AuthPage(),
+      home: const SplashPage(),
     );
   }
 }

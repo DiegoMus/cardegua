@@ -1,14 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:hive/hive.dart';
 
 import 'visita_parcela.dart';
 
+// --- Funciones de ayuda ---
 int? _toNullableInt(dynamic v) {
   if (v == null) return null;
   if (v is int) return v;
@@ -20,56 +20,42 @@ int? _toNullableInt(dynamic v) {
 double? _toNullableDouble(dynamic v) {
   if (v == null) return null;
   if (v is double) return v;
-  if (v is num) return (v as num).toDouble();
+  if (v is num) return v.toDouble();
   final s = v.toString().replaceAll(',', '.');
   return double.tryParse(s);
 }
 
-// MODELO Hive: Parcela -------------------------------------------------------
+// --- Modelo Hive: Parcela ---
 @HiveType(typeId: 10)
 class Parcela extends HiveObject {
   @HiveField(0)
-  int? serverId; // id_parcela en Supabase
-
+  int? serverId;
   @HiveField(1)
   String nombre;
-
   @HiveField(2)
   double? area;
-
   @HiveField(3)
   String? tipoCultivoNombre;
-
   @HiveField(4)
   int? idTipoCultivo;
-
   @HiveField(5)
   double? latitud;
-
   @HiveField(6)
   double? longitud;
-
   @HiveField(7)
   double? altitud;
-
   @HiveField(8)
   int? idMunicipio;
-
   @HiveField(9)
   bool vigente;
-
   @HiveField(10)
   String? fechaRegistroIso;
-
   @HiveField(11)
-  String? operation; // 'create' | 'update' | 'delete' | null
-
+  String? operation;
   @HiveField(12)
-  String status; // 'pending' | 'synced'
-
+  String status;
   @HiveField(13)
   String updatedAt;
-
   @HiveField(14)
   int? productorId;
 
@@ -92,7 +78,7 @@ class Parcela extends HiveObject {
   }) : updatedAt = updatedAt ?? DateTime.now().toIso8601String();
 }
 
-// Adapter manual para Parcela (read/write seguros)
+// --- Adapter de Hive para Parcela ---
 class ParcelaAdapter extends TypeAdapter<Parcela> {
   @override
   final int typeId = 10;
@@ -100,45 +86,25 @@ class ParcelaAdapter extends TypeAdapter<Parcela> {
   @override
   Parcela read(BinaryReader reader) {
     final n = reader.readByte();
-    final m = <int, dynamic>{};
-    for (var i = 0; i < n; i++) {
-      final key = reader.readByte() as int;
-      final val = reader.read();
-      m[key] = val;
-    }
-
-    final serverId = _toNullableInt(m[0]);
-    final nombre = (m[1] ?? '').toString();
-    final area = _toNullableDouble(m[2]);
-    final tipoCultivoNombre = m[3] as String?;
-    final idTipoCultivo = _toNullableInt(m[4]);
-    final latitud = _toNullableDouble(m[5]);
-    final longitud = _toNullableDouble(m[6]);
-    final altitud = _toNullableDouble(m[7]);
-    final idMunicipio = _toNullableInt(m[8]);
-    final vigente = m[9] as bool? ?? true;
-    final fechaRegistroIso = m[10] as String?;
-    final operation = m[11] as String?;
-    final status = (m[12] as String?) ?? 'pending';
-    final updatedAt = m[13] as String?;
-    final productorId = _toNullableInt(m[14]);
-
+    final m = <int, dynamic>{
+      for (var i = 0; i < n; i++) reader.readByte(): reader.read(),
+    };
     return Parcela(
-      serverId: serverId,
-      nombre: nombre,
-      area: area,
-      tipoCultivoNombre: tipoCultivoNombre,
-      idTipoCultivo: idTipoCultivo,
-      latitud: latitud,
-      longitud: longitud,
-      altitud: altitud,
-      idMunicipio: idMunicipio,
-      vigente: vigente,
-      fechaRegistroIso: fechaRegistroIso,
-      operation: operation,
-      status: status,
-      updatedAt: updatedAt,
-      productorId: productorId,
+      serverId: _toNullableInt(m[0]),
+      nombre: (m[1] ?? '').toString(),
+      area: _toNullableDouble(m[2]),
+      tipoCultivoNombre: m[3] as String?,
+      idTipoCultivo: _toNullableInt(m[4]),
+      latitud: _toNullableDouble(m[5]),
+      longitud: _toNullableDouble(m[6]),
+      altitud: _toNullableDouble(m[7]),
+      idMunicipio: _toNullableInt(m[8]),
+      vigente: m[9] as bool? ?? true,
+      fechaRegistroIso: m[10] as String?,
+      operation: m[11] as String?,
+      status: (m[12] as String?) ?? 'pending',
+      updatedAt: m[13] as String?,
+      productorId: _toNullableInt(m[14]),
     );
   }
 
@@ -178,8 +144,8 @@ class ParcelaAdapter extends TypeAdapter<Parcela> {
       ..write(obj.productorId);
   }
 }
-// ---------------------------------------------------------------------------
 
+// --- Página de Parcelas ---
 class ParcelasPage extends StatefulWidget {
   final int productorId;
   final String nombreProductor;
@@ -201,15 +167,13 @@ class _ParcelasPageState extends State<ParcelasPage>
   bool loading = false;
 
   final _formKey = GlobalKey<FormState>();
-  final _idParcelaController = TextEditingController();
   final _nombreController = TextEditingController();
   final _areaController = TextEditingController();
   final _tipoCultivoController = TextEditingController();
-  final _idTipoCultivoController = TextEditingController();
+  final _municipioController = TextEditingController();
   final _latitudController = TextEditingController();
   final _longitudController = TextEditingController();
   final _altitudController = TextEditingController();
-  final _idMunicipioController = TextEditingController();
   final _searchController = TextEditingController();
   bool _vigente = true;
   DateTime? _fechaRegistro;
@@ -218,7 +182,6 @@ class _ParcelasPageState extends State<ParcelasPage>
   int? _selectedMunicipioId;
 
   late AnimationController _animationController;
-
   bool isEditing = false;
   Parcela? editingParcela;
   bool showForm = false;
@@ -229,13 +192,9 @@ class _ParcelasPageState extends State<ParcelasPage>
   late Box<Parcela> _parcelaBox;
   late Box _tipoCultivoBox;
   late Box _municipiosBox;
-  late Box _departamentosBox;
 
-  late StreamSubscription<dynamic> _connectivitySub;
-  dynamic _lastConnectivity;
+  late StreamSubscription<List<ConnectivityResult>> _connectivitySub;
   bool _isOnline = false;
-
-  static const int _pageSize = 20;
 
   @override
   void initState() {
@@ -245,8 +204,23 @@ class _ParcelasPageState extends State<ParcelasPage>
       vsync: this,
     );
     _searchController.addListener(() {
-      filterParcelas(_searchController.text);
+      loadLocalParcelas();
     });
+
+    if (widget.productorId == 0) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Este productor no está sincronizado. No se pueden añadir parcelas.',
+              ),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+      });
+    }
 
     _openBoxesAndInit();
   }
@@ -254,15 +228,13 @@ class _ParcelasPageState extends State<ParcelasPage>
   @override
   void dispose() {
     _animationController.dispose();
-    _idParcelaController.dispose();
     _nombreController.dispose();
     _areaController.dispose();
     _tipoCultivoController.dispose();
-    _idTipoCultivoController.dispose();
+    _municipioController.dispose();
     _latitudController.dispose();
     _longitudController.dispose();
     _altitudController.dispose();
-    _idMunicipioController.dispose();
     _searchController.dispose();
     _connectivitySub.cancel();
     super.dispose();
@@ -275,439 +247,282 @@ class _ParcelasPageState extends State<ParcelasPage>
       }
     } catch (_) {}
 
-    if (!Hive.isBoxOpen('parcelas')) {
-      await Hive.openBox<Parcela>('parcelas');
-    }
-    if (!Hive.isBoxOpen('catalog_tipo_cultivo')) {
+    if (!Hive.isBoxOpen('parcelas')) await Hive.openBox<Parcela>('parcelas');
+    if (!Hive.isBoxOpen('catalog_tipo_cultivo'))
       await Hive.openBox('catalog_tipo_cultivo');
-    }
-    if (!Hive.isBoxOpen('catalog_municipios')) {
+    if (!Hive.isBoxOpen('catalog_municipios'))
       await Hive.openBox('catalog_municipios');
-    }
-    if (!Hive.isBoxOpen('catalog_departamentos')) {
-      await Hive.openBox('catalog_departamentos');
-    }
 
     _parcelaBox = Hive.box<Parcela>('parcelas');
     _tipoCultivoBox = Hive.box('catalog_tipo_cultivo');
     _municipiosBox = Hive.box('catalog_municipios');
-    _departamentosBox = Hive.box('catalog_departamentos');
 
     await loadLocalParcelas();
 
-    final conn = Connectivity();
-    _lastConnectivity = await conn.checkConnectivity();
-    _isOnline =
-        _normalizeConnectivity(_lastConnectivity) != ConnectivityResult.none;
-    setState(() {});
+    final connectivity = Connectivity();
+    final initialStatus = await connectivity.checkConnectivity();
+    _isOnline = _normalizeConnectivity(initialStatus);
+    if (mounted) setState(() {});
 
-    _connectivitySub = conn.onConnectivityChanged.listen((result) async {
-      final prev = _normalizeConnectivity(_lastConnectivity);
-      final now = _normalizeConnectivity(result);
-
-      final wasOnline = _isOnline;
-      _isOnline = now != ConnectivityResult.none;
-      if (wasOnline != _isOnline) setState(() {});
-
-      if (prev == ConnectivityResult.none && now != ConnectivityResult.none) {
-        await syncPending();
-        await _syncCatalogsFromServer();
-        await fetchParcelas();
+    _connectivitySub = connectivity.onConnectivityChanged.listen((result) {
+      final newStatus = _normalizeConnectivity(result);
+      if (_isOnline != newStatus) {
+        if (mounted)
+          setState(() {
+            _isOnline = newStatus;
+          });
+        if (newStatus) {
+          manualRefresh();
+        }
       }
-      _lastConnectivity = result;
     });
+
+    if (_isOnline) {
+      await manualRefresh();
+    }
+  }
+
+  bool _normalizeConnectivity(List<ConnectivityResult> result) {
+    return result.contains(ConnectivityResult.mobile) ||
+        result.contains(ConnectivityResult.wifi);
+  }
+
+  Future<void> loadLocalParcelas() async {
+    parcelas = _parcelaBox.values
+        .where(
+          (p) => p.operation != 'delete' && p.productorId == widget.productorId,
+        )
+        .toList();
+
+    final search = _searchController.text.toLowerCase();
+    if (search.isNotEmpty) {
+      filteredParcelas = parcelas.where((p) {
+        return p.nombre.toLowerCase().contains(search) ||
+            (p.tipoCultivoNombre ?? '').toLowerCase().contains(search);
+      }).toList();
+    } else {
+      filteredParcelas = List.from(parcelas);
+    }
+
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  Future<void> manualRefresh() async {
+    if (!mounted) return;
+    setState(() => loading = true);
 
     if (_isOnline) {
       await syncPending();
       await _syncCatalogsFromServer();
       await fetchParcelas();
+    } else {
+      await loadLocalParcelas();
+    }
+
+    if (mounted) {
+      setState(() => loading = false);
+      _animationController.forward(from: 0);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _isOnline
+                ? 'Actualización completada.'
+                : 'Mostrando datos locales.',
+          ),
+          backgroundColor: _isOnline ? Colors.green : Colors.blueGrey,
+        ),
+      );
     }
   }
 
-  ConnectivityResult _normalizeConnectivity(dynamic value) {
-    try {
-      if (value == null) return ConnectivityResult.none;
-      if (value is ConnectivityResult) return value;
-      if (value is List && value.isNotEmpty) {
-        final first = value.first;
-        if (first is ConnectivityResult) return first;
-        if (first is String) {
-          final s = first.toLowerCase();
-          if (s.contains('wifi')) return ConnectivityResult.wifi;
-          if (s.contains('mobile') || s.contains('cellular'))
-            return ConnectivityResult.mobile;
-        }
-      }
-    } catch (_) {}
-    return ConnectivityResult.none;
-  }
-
   Future<void> _syncCatalogsFromServer() async {
-    if (_normalizeConnectivity(await Connectivity().checkConnectivity()) ==
-        ConnectivityResult.none)
-      return;
-
+    if (!_isOnline) return;
     try {
       final supabase = Supabase.instance.client;
-      final resTipo = await supabase.from('tipo_cultivo').select();
-      if (resTipo is List) {
-        await _tipoCultivoBox.clear();
-        for (final e in resTipo) {
-          if (e is Map) {
-            final id = e['id'] ?? e['id_tipo'] ?? e['id_cultivo'];
-            if (id != null)
-              _tipoCultivoBox.put(id.toString(), Map<String, dynamic>.from(e));
-          }
-        }
+      final resTipo = await supabase.from('tipo_cultivo').select('id, cultivo');
+      await _tipoCultivoBox.clear();
+      for (final e in resTipo) {
+        _tipoCultivoBox.put(e['id'].toString(), e);
       }
-      final resDeps = await supabase.from('departamentos').select();
-      if (resDeps is List) {
-        await _departamentosBox.clear();
-        for (final e in resDeps) {
-          if (e is Map) {
-            final id = e['id'] ?? e['id_departamento'];
-            if (id != null)
-              _departamentosBox.put(
-                id.toString(),
-                Map<String, dynamic>.from(e),
-              );
-          }
-        }
+
+      final resMun = await supabase
+          .from('municipios')
+          .select('id_municipio, nombre');
+      await _municipiosBox.clear();
+      for (final e in resMun) {
+        _municipiosBox.put(e['id_municipio'].toString(), e);
       }
-      final resMun = await supabase.from('municipios').select();
-      if (resMun is List) {
-        await _municipiosBox.clear();
-        for (final e in resMun) {
-          if (e is Map) {
-            final id = e['id_municipio'] ?? e['id'];
-            if (id != null)
-              _municipiosBox.put(id.toString(), Map<String, dynamic>.from(e));
-          }
-        }
-      }
-    } catch (e, st) {
+    } catch (e) {
       debugPrint('Error sincronizando catálogos: $e');
-      debugPrint('$st');
     }
   }
 
   Future<void> syncPending() async {
-    final online =
-        _normalizeConnectivity(await Connectivity().checkConnectivity()) !=
-        ConnectivityResult.none;
-    if (!online) return;
-
+    if (!_isOnline) return;
     final supabase = Supabase.instance.client;
     final pending = _parcelaBox.values
         .where((p) => p.status == 'pending')
         .toList();
 
     for (final p in pending) {
-      final op = p.operation;
       try {
-        if (op == 'create') {
-          final insertMap = {
-            'nombre': p.nombre,
-            'area': p.area,
-            // 'tipo_cultivo': p.tipoCultivoNombre, // QUITADO, SOLO ID
-            'id_tipo_cultivo': p.idTipoCultivo,
-            'latitud': p.latitud,
-            'longitud': p.longitud,
-            'altitud': p.altitud,
-            'id_municipio': p.idMunicipio,
-            'id_productor': p.productorId ?? widget.productorId,
-            'fecha_registro': p.fechaRegistroIso,
-            'vigente': p.vigente,
-          };
-          dynamic res = await supabase
+        if (p.operation == 'create') {
+          final res = await supabase
               .from('parcelas')
-              .insert(insertMap)
-              .select();
-          dynamic server;
-          if (res is List && res.isNotEmpty)
-            server = res.first;
-          else if (res is Map)
-            server = res;
-          else
-            server = null;
-          final serverId = server != null
-              ? (server['id_parcela'] ?? server['id'])
-              : null;
-          if (serverId != null) {
-            p.serverId = (serverId is int)
-                ? serverId
-                : int.tryParse(serverId.toString());
-            p.operation = null;
-            p.status = 'synced';
-            await p.save();
-          }
-        } else if (op == 'update') {
-          final sid = p.serverId;
-          if (sid != null) {
+              .insert({
+                'nombre': p.nombre,
+                'area': p.area,
+                'id_tipo_cultivo': p.idTipoCultivo,
+                'latitud': p.latitud,
+                'longitud': p.longitud,
+                'altitud': p.altitud,
+                'id_municipio': p.idMunicipio,
+                'id_productor': p.productorId,
+                'fecha_registro': p.fechaRegistroIso,
+                'vigente': p.vigente,
+              })
+              .select()
+              .single();
+          p.serverId = res['id_parcela'];
+          p.operation = null;
+          p.status = 'synced';
+          await p.save();
+        } else if (p.operation == 'update' && p.serverId != null) {
+          await supabase
+              .from('parcelas')
+              .update({
+                'nombre': p.nombre,
+                'area': p.area,
+                'id_tipo_cultivo': p.idTipoCultivo,
+                'latitud': p.latitud,
+                'longitud': p.longitud,
+                'altitud': p.altitud,
+                'id_municipio': p.idMunicipio,
+                'vigente': p.vigente,
+              })
+              .eq('id_parcela', p.serverId!);
+          p.operation = null;
+          p.status = 'synced';
+          await p.save();
+        } else if (p.operation == 'delete') {
+          if (p.serverId != null) {
             await supabase
                 .from('parcelas')
-                .update({
-                  'nombre': p.nombre,
-                  'area': p.area,
-                  // 'tipo_cultivo': p.tipoCultivoNombre, // QUITADO, SOLO ID
-                  'id_tipo_cultivo': p.idTipoCultivo,
-                  'latitud': p.latitud,
-                  'longitud': p.longitud,
-                  'altitud': p.altitud,
-                  'id_municipio': p.idMunicipio,
-                  'vigente': p.vigente,
-                })
-                .eq('id_parcela', sid);
-            p.operation = null;
-            p.status = 'synced';
-            await p.save();
-          } else {
-            p.operation = 'create';
-            await p.save();
-          }
-        } else if (op == 'delete') {
-          final sid = p.serverId;
-          if (sid != null) {
-            await supabase.from('parcelas').delete().eq('id_parcela', sid);
+                .delete()
+                .eq('id_parcela', p.serverId!);
           }
           await p.delete();
-        } else {
-          p.status = 'synced';
-          p.operation = null;
-          await p.save();
         }
-      } catch (e, st) {
-        debugPrint('Error sincronizando parcela serverId=${p.serverId}: $e');
-        debugPrint('$st');
+      } catch (e) {
+        debugPrint('Error sincronizando parcela ${p.key}: $e');
       }
     }
-
     await loadLocalParcelas();
   }
 
   Future<void> fetchParcelas() async {
-    setState(() => loading = true);
-    final online =
-        _normalizeConnectivity(await Connectivity().checkConnectivity()) !=
-        ConnectivityResult.none;
-    if (!online) {
+    if (!_isOnline) {
       await loadLocalParcelas();
-      setState(() {
-        loading = false;
-        _animation_controller_forward_safe();
-      });
       return;
     }
-
     try {
-      final supabase = Supabase.instance.client;
-      final result = await supabase
+      final result = await Supabase.instance.client
           .from('parcelas')
-          .select()
+          .select('*, tipo_cultivo(cultivo)')
           .eq('id_productor', widget.productorId);
 
-      final List<dynamic> remote = result ?? [];
-
-      final localByServerId = <int, Parcela>{};
-      for (final p in _parcelaBox.values) {
-        if (p.serverId != null) localByServerId[p.serverId!] = p;
-      }
-
-      for (final r in remote) {
-        if (r is! Map) continue;
-        final serverId = _toNullableInt(r['id_parcela'] ?? r['id']);
+      for (final r in result) {
+        final serverId = _toNullableInt(r['id_parcela']);
         if (serverId == null) continue;
-        final nombre = (r['nombre'] ?? '').toString();
-        final area = _toNullableDouble(r['area']);
-        final tipoNombre = r['tipo_cultivo'] ?? r['cultivo'];
-        final idTipo = _toNullableInt(r['id_tipo_cultivo']);
-        final lat = _toNullableDouble(r['latitud']);
-        final lng = _toNullableDouble(r['longitud']);
-        final alt = _toNullableDouble(r['altitud']);
-        final idMun = _toNullableInt(r['id_municipio']);
-        final vigente = r['vigente'] == null
-            ? true
-            : (r['vigente'] as bool? ?? true);
-        final fechaIso = r['fecha_registro']?.toString();
-        final productoIdRemote = _toNullableInt(r['id_productor']);
 
-        if (localByServerId.containsKey(serverId)) {
-          final local = localByServerId[serverId]!;
-          if (local.operation == null) {
-            local.nombre = nombre;
-            local.area = area;
-            local.tipoCultivoNombre = tipoNombre?.toString();
-            local.idTipoCultivo = idTipo;
-            local.latitud = lat;
-            local.longitud = lng;
-            local.altitud = alt;
-            local.idMunicipio = idMun;
-            local.vigente = vigente;
-            local.fechaRegistroIso = fechaIso;
-            local.productorId = productoIdRemote;
-            local.status = 'synced';
-            await local.save();
-          }
-        } else {
+        final local = _parcelaBox.values.firstWhere(
+          (p) => p.serverId == serverId,
+          orElse: () => Parcela(nombre: '', productorId: widget.productorId),
+        );
+
+        if (local.key == null || local.operation == null) {
           final newP = Parcela(
             serverId: serverId,
-            nombre: nombre.toString(),
-            area: area,
-            tipoCultivoNombre: tipoNombre?.toString(),
-            idTipoCultivo: idTipo,
-            latitud: lat,
-            longitud: lng,
-            altitud: alt,
-            idMunicipio: idMun,
-            vigente: vigente,
-            fechaRegistroIso: fechaIso,
-            operation: null,
+            nombre: r['nombre'] ?? '',
+            area: _toNullableDouble(r['area']),
+            tipoCultivoNombre: r['tipo_cultivo'] != null
+                ? r['tipo_cultivo']['cultivo']
+                : null,
+            idTipoCultivo: _toNullableInt(r['id_tipo_cultivo']),
+            latitud: _toNullableDouble(r['latitud']),
+            longitud: _toNullableDouble(r['longitud']),
+            altitud: _toNullableDouble(r['altitud']),
+            idMunicipio: _toNullableInt(r['id_municipio']),
+            vigente: r['vigente'] ?? true,
+            fechaRegistroIso: r['fecha_registro'],
+            productorId: _toNullableInt(r['id_productor']),
             status: 'synced',
-            productorId: productoIdRemote,
           );
-          await _parcelaBox.add(newP);
+          if (local.key != null) {
+            await _parcelaBox.put(local.key, newP);
+          } else {
+            await _parcelaBox.add(newP);
+          }
         }
       }
-
-      await loadLocalParcelas();
-    } catch (e, st) {
-      debugPrint('Error fetchParcelas: $e');
-      debugPrint('$st');
-      await loadLocalParcelas();
+    } catch (e) {
+      debugPrint('Error en fetchParcelas: $e');
     } finally {
-      setState(() {
-        loading = false;
-        _animation_controller_forward_safe();
-      });
+      await loadLocalParcelas();
     }
-  }
-
-  void _animation_controller_forward_safe() {
-    try {
-      _animationController.forward(from: 0);
-    } catch (_) {}
-  }
-
-  Future<void> loadLocalParcelas() async {
-    debugPrint('DEBUG: widget.productorId (pantalla): ${widget.productorId}');
-    parcelas = _parcelaBox.values
-        .where(
-          (p) =>
-              p.operation != 'delete' && (p.productorId == widget.productorId),
-        )
-        .toList();
-    filteredParcelas = List<Parcela>.from(parcelas);
-
-    setState(() {});
-  }
-
-  void filterParcelas(String query) {
-    setState(() {
-      final search = query.toLowerCase();
-      filteredParcelas = parcelas.where((p) {
-        final nombre = (p.nombre).toLowerCase();
-        final tipoCultivo = (p.tipoCultivoNombre ?? '').toLowerCase();
-        final area = (p.area?.toString() ?? '').toLowerCase();
-        return nombre.contains(search) ||
-            tipoCultivo.contains(search) ||
-            area.contains(search);
-      }).toList();
-    });
   }
 
   void clearFormFields() {
-    _idParcelaController.clear();
     _nombreController.clear();
     _areaController.clear();
     _tipoCultivoController.clear();
-    _idTipoCultivoController.clear();
+    _municipioController.clear();
     _latitudController.clear();
     _longitudController.clear();
     _altitudController.clear();
-    _idMunicipioController.clear();
-    _vigente = true;
-    _fechaRegistro = null;
-    isEditing = false;
-    editingParcela = null;
-    _selectedTipoCultivoId = null;
-    _selectedMunicipioId = null;
     setState(() {
+      _vigente = true;
+      _fechaRegistro = null;
+      isEditing = false;
+      editingParcela = null;
+      _selectedTipoCultivoId = null;
+      _selectedMunicipioId = null;
       showForm = false;
     });
   }
 
-  Future<void> addParcela() async {
-    if (!_formKey.currentState!.validate()) return;
-    final nowIso =
-        _fechaRegistro?.toUtc().toIso8601String() ??
-        DateTime.now().toUtc().toIso8601String();
-
-    final p = Parcela(
-      serverId: null,
-      nombre: _nombreController.text,
-      area: double.tryParse(_areaController.text.replaceAll(',', '.')),
-      tipoCultivoNombre: _tipoCultivoController.text.isEmpty
-          ? null
-          : _tipoCultivoController.text,
-      idTipoCultivo:
-          _selectedTipoCultivoId ?? int.tryParse(_idTipoCultivoController.text),
-      latitud: double.tryParse(_latitudController.text.replaceAll(',', '.')),
-      longitud: double.tryParse(_longitudController.text.replaceAll(',', '.')),
-      altitud: double.tryParse(_altitudController.text.replaceAll(',', '.')),
-      idMunicipio:
-          _selectedMunicipioId ?? int.tryParse(_idMunicipioController.text),
-      vigente: _vigente,
-      fechaRegistroIso: nowIso,
-      operation: 'create',
-      status: 'pending',
-      productorId: widget.productorId,
-    );
-
-    await _parcelaBox.add(p);
-    await loadLocalParcelas();
-    clearFormFields();
-
-    if (_isOnline) {
-      await syncPending();
-      await fetchParcelas();
-    }
-  }
-
-  Future<void> updateParcela() async {
-    if (!isEditing || editingParcela == null) return;
+  Future<void> addOrUpdateParcela() async {
     if (!_formKey.currentState!.validate()) return;
 
-    final p = editingParcela!;
+    final p = isEditing
+        ? editingParcela!
+        : Parcela(productorId: widget.productorId, nombre: '');
+
     p.nombre = _nombreController.text;
-    p.area = double.tryParse(_areaController.text.replaceAll(',', '.'));
-    p.tipoCultivoNombre = _tipoCultivoController.text.isEmpty
-        ? null
-        : _tipoCultivoController.text;
-    p.idTipoCultivo =
-        _selectedTipoCultivoId ?? int.tryParse(_idTipoCultivoController.text);
-    p.latitud = double.tryParse(_latitudController.text.replaceAll(',', '.'));
-    p.longitud = double.tryParse(_longitudController.text.replaceAll(',', '.'));
-    p.altitud = double.tryParse(_altitudController.text.replaceAll(',', '.'));
-    p.idMunicipio =
-        _selectedMunicipioId ?? int.tryParse(_idMunicipioController.text);
+    p.area = _toNullableDouble(_areaController.text);
+    p.tipoCultivoNombre = _tipoCultivoController.text;
+    p.idTipoCultivo = _selectedTipoCultivoId;
+    p.latitud = _toNullableDouble(_latitudController.text);
+    p.longitud = _toNullableDouble(_longitudController.text);
+    p.altitud = _toNullableDouble(_altitudController.text);
+    p.idMunicipio = _selectedMunicipioId;
     p.vigente = _vigente;
+    p.fechaRegistroIso = (_fechaRegistro ?? DateTime.now()).toIso8601String();
+    p.status = 'pending';
+    p.operation = (p.serverId == null) ? 'create' : 'update';
     p.updatedAt = DateTime.now().toIso8601String();
 
-    if (p.serverId == null) {
-      p.operation = 'create';
+    if (isEditing) {
+      await p.save();
     } else {
-      p.operation = 'update';
+      await _parcelaBox.add(p);
     }
-    p.status = 'pending';
-    await p.save();
 
     await loadLocalParcelas();
     clearFormFields();
-
-    if (_isOnline) {
-      await syncPending();
-      await fetchParcelas();
-    }
+    if (_isOnline) await syncPending();
   }
 
   Future<void> deleteParcelaLocal(Parcela p) async {
@@ -716,181 +531,107 @@ class _ParcelasPageState extends State<ParcelasPage>
     } else {
       p.operation = 'delete';
       p.status = 'pending';
-      p.updatedAt = DateTime.now().toIso8601String();
       await p.save();
     }
     await loadLocalParcelas();
-
-    if (_isOnline) {
-      await syncPending();
-      await fetchParcelas();
-    }
+    if (_isOnline) await syncPending();
   }
 
   void startEditParcelaObj(Parcela p) {
     setState(() {
       isEditing = true;
       editingParcela = p;
-      _idParcelaController.text = p.serverId?.toString() ?? '';
       _nombreController.text = p.nombre;
       _areaController.text = p.area?.toString() ?? '';
       _tipoCultivoController.text = p.tipoCultivoNombre ?? '';
-      _idTipoCultivoController.text = p.idTipoCultivo?.toString() ?? '';
+      _selectedTipoCultivoId = p.idTipoCultivo;
+      _selectedMunicipioId = p.idMunicipio;
+
+      final municipio = _municipiosBox.get(p.idMunicipio?.toString());
+      _municipioController.text = municipio != null ? municipio['nombre'] : '';
+
       _latitudController.text = p.latitud?.toString() ?? '';
       _longitudController.text = p.longitud?.toString() ?? '';
       _altitudController.text = p.altitud?.toString() ?? '';
-      _idMunicipioController.text = p.idMunicipio?.toString() ?? '';
+
       _vigente = p.vigente;
-      try {
-        _fechaRegistro = p.fechaRegistroIso != null
-            ? DateTime.parse(p.fechaRegistroIso!).toLocal()
-            : null;
-      } catch (_) {
-        _fechaRegistro = null;
-      }
+      _fechaRegistro = p.fechaRegistroIso != null
+          ? DateTime.tryParse(p.fechaRegistroIso!)
+          : null;
       showForm = true;
     });
   }
 
-  // Picker helpers
-  Future<void> _pickTipoCultivo() async {
-    final online =
-        _normalizeConnectivity(await Connectivity().checkConnectivity()) !=
-        ConnectivityResult.none;
-    List<Map<String, dynamic>> items = [];
-    if (online) {
-      final res = await Supabase.instance.client.from('tipo_cultivo').select();
-      if (res is List) {
-        items = res.map((e) => Map<String, dynamic>.from(e)).toList();
-        await _tipoCultivoBox.clear();
-        for (final i in items) {
-          _tipoCultivoBox.put(i['id'].toString(), i);
-        }
-      }
-    } else {
-      items = _tipoCultivoBox.values.cast<Map<String, dynamic>>().toList();
-    }
+  Future<void> _pickCatalog({
+    required String title,
+    required Box catalogBox,
+    required String idField,
+    required String nameField,
+    required Function(Map<String, dynamic>) onSelected,
+  }) async {
+    final items = catalogBox.values.cast<Map>().toList();
+    items.sort(
+      (a, b) => (a[nameField] as String).compareTo(b[nameField] as String),
+    );
+
     final selected = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
-      builder: (ctx) {
-        return ListView(
-          children: items.map((itm) {
-            return ListTile(
-              title: Text(itm['cultivo'] ?? ''),
-              onTap: () => Navigator.of(ctx).pop(itm),
-            );
-          }).toList(),
-        );
-      },
+      builder: (ctx) => SafeArea(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Text(title, style: Theme.of(context).textTheme.titleLarge),
+            ),
+            Expanded(
+              child: ListView.builder(
+                itemCount: items.length,
+                itemBuilder: (context, index) {
+                  final item = Map<String, dynamic>.from(items[index]);
+                  return ListTile(
+                    title: Text(item[nameField] ?? ''),
+                    onTap: () => Navigator.of(ctx).pop(item),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
     );
     if (selected != null) {
-      setState(() {
-        _selectedTipoCultivoId = _toNullableInt(selected['id']);
-        _tipoCultivoController.text = (selected['cultivo'] ?? '').toString();
-      });
+      onSelected(selected);
     }
+  }
+
+  Future<void> _pickTipoCultivo() async {
+    await _pickCatalog(
+      title: 'Seleccionar Cultivo',
+      catalogBox: _tipoCultivoBox,
+      idField: 'id',
+      nameField: 'cultivo',
+      onSelected: (selected) {
+        setState(() {
+          _selectedTipoCultivoId = _toNullableInt(selected['id']);
+          _tipoCultivoController.text = selected['cultivo'] ?? '';
+        });
+      },
+    );
   }
 
   Future<void> _pickMunicipio() async {
-    final online =
-        _normalizeConnectivity(await Connectivity().checkConnectivity()) !=
-        ConnectivityResult.none;
-    List<Map<String, dynamic>> items = [];
-    if (online) {
-      final res = await Supabase.instance.client.from('municipios').select();
-      if (res is List) {
-        items = res.map((e) => Map<String, dynamic>.from(e)).toList();
-        await _municipiosBox.clear();
-        for (final i in items) {
-          _municipiosBox.put(i['id_municipio'].toString(), i);
-        }
-      }
-    } else {
-      items = _municipiosBox.values.cast<Map<String, dynamic>>().toList();
-    }
-    final selected = await showModalBottomSheet<Map<String, dynamic>>(
-      context: context,
-      builder: (ctx) {
-        return ListView(
-          children: items.map((itm) {
-            return ListTile(
-              title: Text(itm['nombre'] ?? ''),
-              onTap: () => Navigator.of(ctx).pop(itm),
-            );
-          }).toList(),
-        );
+    await _pickCatalog(
+      title: 'Seleccionar Municipio',
+      catalogBox: _municipiosBox,
+      idField: 'id_municipio',
+      nameField: 'nombre',
+      onSelected: (selected) {
+        setState(() {
+          _selectedMunicipioId = _toNullableInt(selected['id_municipio']);
+          _municipioController.text = selected['nombre'] ?? '';
+        });
       },
     );
-    if (selected != null) {
-      setState(() {
-        _selectedMunicipioId = _toNullableInt(
-          selected['id_municipio'] ?? selected['id'],
-        );
-        _idMunicipioController.text =
-            (selected['nombre'] ?? selected['id_municipio']?.toString() ?? '')
-                .toString();
-      });
-    }
-  }
-
-  Future<void> _pickFechaRegistro(BuildContext context) async {
-    final initial = _fechaRegistro ?? DateTime.now();
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: initial,
-      firstDate: DateTime(2000),
-      lastDate: DateTime(2100),
-    );
-    if (picked != null) {
-      setState(() {
-        _fechaRegistro = picked;
-      });
-    }
-  }
-
-  void _markParcelaRecentlyVisited(int parcelaId) {
-    setState(() {
-      _recentlyVisitedIds.add(parcelaId);
-    });
-    Timer(_highlightDuration, () {
-      if (mounted) {
-        setState(() {
-          _recentlyVisitedIds.remove(parcelaId);
-        });
-      }
-    });
-  }
-
-  Future<void> _manualRefresh() async {
-    final now = _normalizeConnectivity(
-      await Connectivity().checkConnectivity(),
-    );
-    if (now == ConnectivityResult.none) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('No hay conexión.')));
-      }
-      return;
-    }
-
-    if (mounted) setState(() => loading = true);
-    try {
-      await syncPending();
-      await _syncCatalogsFromServer();
-      await fetchParcelas();
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Actualización completa.')),
-        );
-    } catch (e) {
-      if (mounted)
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error: $e')));
-    } finally {
-      if (mounted) setState(() => loading = false);
-    }
   }
 
   @override
@@ -898,14 +639,7 @@ class _ParcelasPageState extends State<ParcelasPage>
     final natureGreen = const Color(0xFF6DB571);
     final backgroundNature = const Color(0xFFEAFBE7);
     final accentNature = const Color(0xFFB2D8B2);
-    debugPrint(
-      'DEBUG: build - longitud filteredParcelas = ${filteredParcelas.length}',
-    );
-    for (final p in filteredParcelas) {
-      debugPrint(
-        'DEBUG: build muestra -> ${p.nombre} (productorId=${p.productorId})',
-      );
-    }
+
     return Scaffold(
       backgroundColor: backgroundNature,
       appBar: AppBar(
@@ -924,12 +658,12 @@ class _ParcelasPageState extends State<ParcelasPage>
               Icons.sync,
               color: _isOnline ? Colors.white : Colors.white54,
             ),
-            onPressed: _isOnline ? _manualRefresh : null,
-            tooltip: _isOnline ? 'Actualizar' : 'Sin conexión',
+            onPressed: manualRefresh,
+            tooltip: _isOnline ? 'Actualizar' : 'Recargar datos locales',
           ),
         ],
       ),
-      floatingActionButton: showForm
+      floatingActionButton: (showForm || widget.productorId == 0)
           ? null
           : FloatingActionButton(
               backgroundColor: natureGreen,
@@ -940,773 +674,414 @@ class _ParcelasPageState extends State<ParcelasPage>
       body: loading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
-              onRefresh: () async {
-                final now = _normalizeConnectivity(
-                  await Connectivity().checkConnectivity(),
-                );
-                if (now == ConnectivityResult.none) {
-                  if (mounted)
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('No hay conexión para actualizar.'),
-                      ),
-                    );
-                  return;
-                }
-                await syncPending();
-                await _syncCatalogsFromServer();
-                await fetchParcelas();
-              },
+              onRefresh: manualRefresh,
               child: ListView(
                 padding: const EdgeInsets.all(12.0),
                 children: [
-                  Center(
-                    child: CircleAvatar(
-                      radius: 60,
-                      backgroundImage: const AssetImage(
-                        'assets/images/primavera.png',
-                      ),
-                      backgroundColor: Colors.transparent,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      labelText: 'Buscar por nombre, cultivo o área',
-                      prefixIcon: Icon(Icons.search, color: natureGreen),
-                      filled: true,
-                      fillColor: Colors.white,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        vertical: 8,
-                        horizontal: 8,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
                   if (showForm)
-                    Card(
-                      elevation: 2,
-                      color: accentNature,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        child: Form(
-                          key: _formKey,
-                          child: Column(
-                            children: [
-                              Text(
-                                isEditing ? 'Editar Parcela' : 'Nueva Parcela',
-                                style: GoogleFonts.montserrat(
-                                  color: natureGreen,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              TextFormField(
-                                controller: _nombreController,
-                                decoration: InputDecoration(
-                                  labelText: 'Nombre',
-                                  prefixIcon: const Icon(
-                                    Icons.landscape,
-                                    color: Colors.green,
-                                    size: 20,
-                                  ),
-                                  filled: true,
-                                  fillColor: Colors.white,
-                                  border: const OutlineInputBorder(),
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    vertical: 8,
-                                    horizontal: 8,
-                                  ),
-                                ),
-                                validator: (v) {
-                                  if ((v ?? '').trim().isEmpty) {
-                                    return 'Ingrese nombre';
-                                  }
-                                  return null;
-                                },
-                              ),
-                              const SizedBox(height: 8),
-                              TextFormField(
-                                controller: _areaController,
-                                decoration: InputDecoration(
-                                  labelText: 'Área (ha)',
-                                  prefixIcon: const Icon(
-                                    Icons.square_foot,
-                                    color: Colors.green,
-                                    size: 20,
-                                  ),
-                                  filled: true,
-                                  fillColor: Colors.white,
-                                  border: const OutlineInputBorder(),
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    vertical: 8,
-                                    horizontal: 8,
-                                  ),
-                                ),
-                                keyboardType: TextInputType.number,
-                                validator: (v) {
-                                  if ((v ?? '').trim().isEmpty) {
-                                    return 'Ingrese el área';
-                                  }
-                                  final val = double.tryParse(
-                                    v!.replaceAll(',', '.'),
-                                  );
-                                  if (val == null || val <= 0) {
-                                    return 'Área inválida';
-                                  }
-                                  return null;
-                                },
-                              ),
-                              const SizedBox(height: 8),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: TextFormField(
-                                      controller: _tipoCultivoController,
-                                      readOnly: true,
-                                      decoration: InputDecoration(
-                                        labelText: 'Tipo de Cultivo',
-                                        prefixIcon: const Icon(
-                                          Icons.grass,
-                                          color: Colors.green,
-                                          size: 20,
-                                        ),
-                                        filled: true,
-                                        fillColor: Colors.white,
-                                        border: const OutlineInputBorder(),
-                                        contentPadding:
-                                            const EdgeInsets.symmetric(
-                                              vertical: 8,
-                                              horizontal: 8,
-                                            ),
-                                      ),
-                                      onTap: _pickTipoCultivo,
-                                      validator: (v) {
-                                        if ((v ?? '').trim().isEmpty) {
-                                          return 'Seleccione tipo de cultivo';
-                                        }
-                                        return null;
-                                      },
-                                    ),
-                                  ),
-                                  IconButton(
-                                    icon: const Icon(Icons.arrow_drop_down),
-                                    onPressed: _pickTipoCultivo,
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: TextFormField(
-                                      controller: _idMunicipioController,
-                                      readOnly: true,
-                                      decoration: InputDecoration(
-                                        labelText: 'Municipio',
-                                        prefixIcon: const Icon(
-                                          Icons.location_city,
-                                          color: Colors.green,
-                                          size: 20,
-                                        ),
-                                        filled: true,
-                                        fillColor: Colors.white,
-                                        border: const OutlineInputBorder(),
-                                        contentPadding:
-                                            const EdgeInsets.symmetric(
-                                              vertical: 8,
-                                              horizontal: 8,
-                                            ),
-                                      ),
-                                      onTap: _pickMunicipio,
-                                      validator: (v) {
-                                        if ((v ?? '').trim().isEmpty) {
-                                          return 'Seleccione municipio';
-                                        }
-                                        return null;
-                                      },
-                                    ),
-                                  ),
-                                  IconButton(
-                                    icon: const Icon(Icons.arrow_drop_down),
-                                    onPressed: _pickMunicipio,
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: TextFormField(
-                                      controller: _latitudController,
-                                      decoration: InputDecoration(
-                                        labelText: 'Latitud',
-                                        prefixIcon: const Icon(
-                                          Icons.pin_drop,
-                                          color: Colors.green,
-                                          size: 20,
-                                        ),
-                                        filled: true,
-                                        fillColor: Colors.white,
-                                        border: const OutlineInputBorder(),
-                                        contentPadding:
-                                            const EdgeInsets.symmetric(
-                                              vertical: 8,
-                                              horizontal: 8,
-                                            ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: TextFormField(
-                                      controller: _longitudController,
-                                      decoration: InputDecoration(
-                                        labelText: 'Longitud',
-                                        prefixIcon: const Icon(
-                                          Icons.pin_drop,
-                                          color: Colors.green,
-                                          size: 20,
-                                        ),
-                                        filled: true,
-                                        fillColor: Colors.white,
-                                        border: const OutlineInputBorder(),
-                                        contentPadding:
-                                            const EdgeInsets.symmetric(
-                                              vertical: 8,
-                                              horizontal: 8,
-                                            ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: TextFormField(
-                                      controller: _altitudController,
-                                      decoration: InputDecoration(
-                                        labelText: 'Altitud (msnm)',
-                                        prefixIcon: const Icon(
-                                          Icons.terrain,
-                                          color: Colors.green,
-                                          size: 20,
-                                        ),
-                                        filled: true,
-                                        fillColor: Colors.white,
-                                        border: const OutlineInputBorder(),
-                                        contentPadding:
-                                            const EdgeInsets.symmetric(
-                                              vertical: 8,
-                                              horizontal: 8,
-                                            ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Row(
-                                      children: [
-                                        Checkbox(
-                                          value: _vigente,
-                                          onChanged: (val) {
-                                            setState(() => _vigente = val!);
-                                          },
-                                        ),
-                                        const Text('Vigente'),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: ElevatedButton.icon(
-                                      icon: Icon(
-                                        isEditing
-                                            ? Icons.edit
-                                            : Icons.add_circle_outline,
-                                        color: Colors.white,
-                                        size: 20,
-                                      ),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: isEditing
-                                            ? Colors.orange
-                                            : natureGreen,
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
-                                        ),
-                                        padding: const EdgeInsets.symmetric(
-                                          vertical: 10,
-                                          horizontal: 18,
-                                        ),
-                                      ),
-                                      label: Text(
-                                        isEditing
-                                            ? 'Guardar edición'
-                                            : 'Agregar Parcela',
-                                        style: GoogleFonts.montserrat(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                      onPressed: () {
-                                        if (isEditing &&
-                                            editingParcela != null) {
-                                          updateParcela();
-                                        } else {
-                                          addParcela();
-                                        }
-                                      },
-                                    ),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: ElevatedButton.icon(
-                                      icon: const Icon(
-                                        Icons.cancel,
-                                        color: Colors.white,
-                                        size: 20,
-                                      ),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: Colors.red,
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
-                                        ),
-                                        padding: const EdgeInsets.symmetric(
-                                          vertical: 10,
-                                          horizontal: 18,
-                                        ),
-                                      ),
-                                      label: Text(
-                                        'Cancelar',
-                                        style: GoogleFonts.montserrat(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                      onPressed: clearFormFields,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  const SizedBox(height: 10),
-                  AnimatedBuilder(
-                    animation: _animationController,
-                    builder: (context, child) {
-                      return Column(
-                        children: [
-                          ...filteredParcelas.asMap().entries.map((entry) {
-                            final i = entry.key;
-                            final p = entry.value;
-                            final parcelaId = p.serverId ?? 0;
-                            final isHighlighted = _recentlyVisitedIds.contains(
-                              parcelaId,
-                            );
-                            final cardColor = isHighlighted
-                                ? accentNature
-                                : Colors.white;
-                            final scale = isHighlighted ? 1.02 : 1.0;
-                            final elevation = isHighlighted ? 6.0 : 1.0;
-
-                            return FadeTransition(
-                              opacity: CurvedAnimation(
-                                parent: _animationController,
-                                curve: Interval(
-                                  i /
-                                      (filteredParcelas.isEmpty
-                                          ? 1
-                                          : filteredParcelas.length),
-                                  1.0,
-                                  curve: Curves.easeIn,
-                                ),
-                              ),
-                              child: TweenAnimationBuilder<double>(
-                                tween: Tween(begin: 1.0, end: scale),
-                                duration: const Duration(milliseconds: 350),
-                                curve: Curves.easeOutBack,
-                                builder: (context, value, child) {
-                                  return Transform.scale(
-                                    scale: value,
-                                    child: Stack(
-                                      children: [
-                                        AnimatedContainer(
-                                          duration: const Duration(
-                                            milliseconds: 350,
-                                          ),
-                                          margin: const EdgeInsets.symmetric(
-                                            vertical: 6,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            borderRadius: BorderRadius.circular(
-                                              8,
-                                            ),
-                                          ),
-                                          child: Card(
-                                            color: cardColor,
-                                            margin: EdgeInsets.zero,
-                                            elevation: elevation,
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(8),
-                                            ),
-                                            child: ListTile(
-                                              onTap: () async {
-                                                final parcelaIdString =
-                                                    (p.serverId ?? 0)
-                                                        .toString();
-                                                final result =
-                                                    await Navigator.push(
-                                                      context,
-                                                      MaterialPageRoute(
-                                                        builder: (context) =>
-                                                            FormularioVisita(
-                                                              parcelaId:
-                                                                  parcelaIdString,
-                                                            ),
-                                                      ),
-                                                    );
-                                                if (result == true) {
-                                                  await fetchParcelas();
-                                                  _markParcelaRecentlyVisited(
-                                                    parcelaId,
-                                                  );
-                                                }
-                                              },
-                                              leading: CircleAvatar(
-                                                backgroundColor: accentNature,
-                                                child: Icon(
-                                                  Icons.landscape,
-                                                  color: natureGreen,
-                                                ),
-                                              ),
-                                              title: Text(
-                                                p.nombre,
-                                                style: GoogleFonts.montserrat(
-                                                  color: natureGreen,
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                              ),
-                                              subtitle: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                                  if ((p.tipoCultivoNombre ??
-                                                          '')
-                                                      .isNotEmpty)
-                                                    Row(
-                                                      children: [
-                                                        Icon(
-                                                          Icons.grass,
-                                                          size: 16,
-                                                          color:
-                                                              Colors.green[600],
-                                                        ),
-                                                        const SizedBox(
-                                                          width: 6,
-                                                        ),
-                                                        Text(
-                                                          p.tipoCultivoNombre ??
-                                                              '',
-                                                          style:
-                                                              GoogleFonts.montserrat(
-                                                                color: Colors
-                                                                    .green[800],
-                                                                fontSize: 13,
-                                                              ),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  if ((p.area?.toString() ?? '')
-                                                      .isNotEmpty)
-                                                    Row(
-                                                      children: [
-                                                        Icon(
-                                                          Icons.square_foot,
-                                                          size: 16,
-                                                          color:
-                                                              Colors.green[600],
-                                                        ),
-                                                        const SizedBox(
-                                                          width: 6,
-                                                        ),
-                                                        Text(
-                                                          p.area?.toString() ??
-                                                              '',
-                                                          style:
-                                                              GoogleFonts.montserrat(
-                                                                color: Colors
-                                                                    .green[800],
-                                                                fontSize: 13,
-                                                              ),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  if (p.status == 'pending')
-                                                    Row(
-                                                      children: [
-                                                        const SizedBox(
-                                                          width: 4,
-                                                        ),
-                                                        Icon(
-                                                          Icons.sync,
-                                                          size: 14,
-                                                          color: Colors.orange,
-                                                        ),
-                                                        const SizedBox(
-                                                          width: 4,
-                                                        ),
-                                                        Text(
-                                                          'Pendiente de sincronizar',
-                                                          style:
-                                                              GoogleFonts.montserrat(
-                                                                color: Colors
-                                                                    .orange,
-                                                                fontSize: 12,
-                                                              ),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                ],
-                                              ),
-                                              trailing: PopupMenuButton<String>(
-                                                icon: Icon(
-                                                  Icons.more_vert,
-                                                  color: natureGreen,
-                                                ),
-                                                onSelected: (value) async {
-                                                  if (value == 'edit') {
-                                                    startEditParcelaObj(p);
-                                                  } else if (value ==
-                                                      'visita') {
-                                                    final parcelaIdString =
-                                                        (p.serverId ?? 0)
-                                                            .toString();
-                                                    final result =
-                                                        await Navigator.push(
-                                                          context,
-                                                          MaterialPageRoute(
-                                                            builder: (context) =>
-                                                                FormularioVisita(
-                                                                  parcelaId:
-                                                                      parcelaIdString,
-                                                                ),
-                                                          ),
-                                                        );
-                                                    if (result == true) {
-                                                      await fetchParcelas();
-                                                      _markParcelaRecentlyVisited(
-                                                        parcelaId,
-                                                      );
-                                                    }
-                                                  } else if (value ==
-                                                      'delete') {
-                                                    final confirmed = await showDialog<bool>(
-                                                      context: context,
-                                                      builder: (ctx) => AlertDialog(
-                                                        title: const Text(
-                                                          'Confirmar eliminación',
-                                                        ),
-                                                        content: Text(
-                                                          '¿Eliminar la parcela "${p.nombre}"?',
-                                                        ),
-                                                        actions: [
-                                                          TextButton(
-                                                            onPressed: () =>
-                                                                Navigator.of(
-                                                                  ctx,
-                                                                ).pop(false),
-                                                            child: const Text(
-                                                              'Cancelar',
-                                                            ),
-                                                          ),
-                                                          TextButton(
-                                                            onPressed: () =>
-                                                                Navigator.of(
-                                                                  ctx,
-                                                                ).pop(true),
-                                                            child: const Text(
-                                                              'Eliminar',
-                                                              style: TextStyle(
-                                                                color:
-                                                                    Colors.red,
-                                                              ),
-                                                            ),
-                                                          ),
-                                                        ],
-                                                      ),
-                                                    );
-                                                    if (confirmed == true) {
-                                                      await deleteParcelaLocal(
-                                                        p,
-                                                      );
-                                                    }
-                                                  }
-                                                },
-                                                itemBuilder: (context) => [
-                                                  PopupMenuItem(
-                                                    value: 'edit',
-                                                    child: Row(
-                                                      children: [
-                                                        Icon(
-                                                          Icons.edit,
-                                                          color: natureGreen,
-                                                        ),
-                                                        const SizedBox(
-                                                          width: 8,
-                                                        ),
-                                                        Text(
-                                                          'Editar',
-                                                          style:
-                                                              GoogleFonts.montserrat(
-                                                                color:
-                                                                    natureGreen,
-                                                              ),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  ),
-                                                  PopupMenuItem(
-                                                    value: 'visita',
-                                                    child: Row(
-                                                      children: [
-                                                        Icon(
-                                                          Icons
-                                                              .medical_services,
-                                                          color: natureGreen,
-                                                        ),
-                                                        const SizedBox(
-                                                          width: 8,
-                                                        ),
-                                                        Text(
-                                                          'Registrar Visita',
-                                                          style:
-                                                              GoogleFonts.montserrat(
-                                                                color:
-                                                                    natureGreen,
-                                                              ),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  ),
-                                                  PopupMenuItem(
-                                                    value: 'delete',
-                                                    child: Row(
-                                                      children: [
-                                                        Icon(
-                                                          Icons.delete,
-                                                          color: Colors.red,
-                                                        ),
-                                                        const SizedBox(
-                                                          width: 8,
-                                                        ),
-                                                        Text(
-                                                          'Eliminar',
-                                                          style:
-                                                              GoogleFonts.montserrat(
-                                                                color:
-                                                                    Colors.red,
-                                                              ),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                        Positioned(
-                                          top: 6,
-                                          right: 6,
-                                          child: AnimatedOpacity(
-                                            opacity: isHighlighted ? 1.0 : 0.0,
-                                            duration: const Duration(
-                                              milliseconds: 250,
-                                            ),
-                                            child: Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 8,
-                                                    vertical: 4,
-                                                  ),
-                                              decoration: BoxDecoration(
-                                                color: Colors.redAccent,
-                                                borderRadius:
-                                                    BorderRadius.circular(12),
-                                              ),
-                                              child: Row(
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: [
-                                                  const Icon(
-                                                    Icons.fiber_new,
-                                                    size: 14,
-                                                    color: Colors.white,
-                                                  ),
-                                                  const SizedBox(width: 6),
-                                                  Text(
-                                                    'Nueva visita',
-                                                    style:
-                                                        GoogleFonts.montserrat(
-                                                          fontSize: 12,
-                                                          color: Colors.white,
-                                                        ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                },
-                              ),
-                            );
-                          }).toList(),
-                          if (filteredParcelas.isEmpty)
-                            Padding(
-                              padding: const EdgeInsets.all(20),
-                              child: Text(
-                                'No se encontraron parcelas.',
-                                style: GoogleFonts.montserrat(
-                                  color: Colors.grey,
-                                  fontSize: 16,
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
-                            ),
-                        ],
-                      );
-                    },
-                  ),
+                    _buildForm(natureGreen, accentNature)
+                  else
+                    _buildList(natureGreen, accentNature),
                 ],
               ),
             ),
+    );
+  }
+
+  Widget _buildList(Color natureGreen, Color accentNature) {
+    return Column(
+      children: [
+        Center(
+          child: CircleAvatar(
+            radius: 60,
+            backgroundImage: const AssetImage('assets/images/primavera.png'),
+            backgroundColor: Colors.transparent,
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _searchController,
+          decoration: InputDecoration(
+            labelText: 'Buscar por nombre o cultivo',
+            prefixIcon: Icon(Icons.search, color: natureGreen),
+            filled: true,
+            fillColor: Colors.white,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+        ),
+        const SizedBox(height: 10),
+        if (filteredParcelas.isEmpty && !loading)
+          const Padding(
+            padding: EdgeInsets.all(20),
+            child: Text(
+              'No se encontraron parcelas para este productor.',
+              textAlign: TextAlign.center,
+            ),
+          )
+        else
+          ...filteredParcelas.map((p) {
+            return Card(
+              margin: const EdgeInsets.symmetric(vertical: 4),
+              elevation: 2,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: accentNature,
+                  child: Icon(Icons.landscape, color: natureGreen),
+                ),
+                title: Text(
+                  p.nombre,
+                  style: GoogleFonts.montserrat(
+                    fontWeight: FontWeight.bold,
+                    color: natureGreen,
+                  ),
+                ),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (p.tipoCultivoNombre != null) Text(p.tipoCultivoNombre!),
+                    if (p.area != null) Text('${p.area} ha'),
+                    if (p.status == 'pending')
+                      const Row(
+                        children: [
+                          Icon(
+                            Icons.sync_problem,
+                            color: Colors.orange,
+                            size: 14,
+                          ),
+                          SizedBox(width: 4),
+                          Text(
+                            'Pendiente',
+                            style: TextStyle(color: Colors.orange),
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+                trailing: PopupMenuButton<String>(
+                  onSelected: (value) async {
+                    if (value == 'edit') {
+                      startEditParcelaObj(p);
+                    } else if (value == 'delete') {
+                      final confirmed = await showDialog<bool>(
+                        context: context,
+                        builder: (ctx) => AlertDialog(
+                          title: const Text('Confirmar eliminación'),
+                          content: Text('¿Eliminar la parcela "${p.nombre}"?'),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.of(ctx).pop(false),
+                              child: const Text('Cancelar'),
+                            ),
+                            TextButton(
+                              onPressed: () => Navigator.of(ctx).pop(true),
+                              child: const Text(
+                                'Eliminar',
+                                style: TextStyle(color: Colors.red),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (confirmed == true) {
+                        await deleteParcelaLocal(p);
+                      }
+                    } else if (value == 'visita') {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => FormularioVisita(
+                            parcelaId: p.serverId.toString(),
+                          ),
+                        ),
+                      );
+                    }
+                  },
+                  itemBuilder: (context) => [
+                    //const PopupMenuItem(value: 'edit', child: Text('Editar')),
+                    PopupMenuItem(
+                      value: 'edit',
+                      child: Row(
+                        children: [
+                          Icon(Icons.edit, color: natureGreen),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Editar',
+                            style: GoogleFonts.montserrat(color: natureGreen),
+                          ),
+                        ],
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 'visita',
+                      child: Row(
+                        children: [
+                          Icon(Icons.add_location, color: natureGreen),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Nueva Visita',
+                            style: GoogleFonts.montserrat(color: natureGreen),
+                          ),
+                        ],
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 'delete',
+                      child: Text(
+                        'Eliminar',
+                        style: TextStyle(color: Colors.red),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }).toList(),
+      ],
+    );
+  }
+
+  Widget _buildForm(Color natureGreen, Color accentNature) {
+    return Card(
+      elevation: 2,
+      color: accentNature,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              Text(
+                isEditing ? 'Editar Parcela' : 'Nueva Parcela',
+                style: GoogleFonts.montserrat(
+                  color: natureGreen,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _nombreController,
+                decoration: const InputDecoration(
+                  labelText: 'Nombre',
+                  prefixIcon: Icon(
+                    Icons.landscape,
+                    color: Colors.green,
+                    size: 20,
+                  ),
+                  filled: true,
+                  fillColor: Colors.white,
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(
+                    vertical: 8,
+                    horizontal: 8,
+                  ),
+                ),
+                validator: (v) =>
+                    (v?.isEmpty ?? true) ? 'Ingrese un nombre' : null,
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _areaController,
+                decoration: const InputDecoration(
+                  labelText: 'Área (cuerdas)',
+                  prefixIcon: Icon(
+                    Icons.square_foot,
+                    color: Colors.green,
+                    size: 20,
+                  ),
+                  filled: true,
+                  fillColor: Colors.white,
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(
+                    vertical: 8,
+                    horizontal: 8,
+                  ),
+                ),
+                keyboardType: TextInputType.number,
+                validator: (v) => (_toNullableDouble(v) == null)
+                    ? 'Ingrese un área válida'
+                    : null,
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _latitudController,
+                decoration: const InputDecoration(
+                  labelText: 'Latitud',
+                  prefixIcon: Icon(
+                    Icons.location_on,
+                    color: Colors.green,
+                    size: 20,
+                  ),
+                  filled: true,
+                  fillColor: Colors.white,
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(
+                    vertical: 8,
+                    horizontal: 8,
+                  ),
+                ),
+                keyboardType: TextInputType.number,
+                validator: (v) => (_toNullableDouble(v) == null)
+                    ? 'Ingrese una latitud válida'
+                    : null,
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _longitudController,
+                decoration: const InputDecoration(
+                  labelText: 'Longitud',
+                  prefixIcon: Icon(
+                    Icons.location_on,
+                    color: Colors.green,
+                    size: 20,
+                  ),
+                  filled: true,
+                  fillColor: Colors.white,
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(
+                    vertical: 8,
+                    horizontal: 8,
+                  ),
+                ),
+                keyboardType: TextInputType.number,
+                validator: (v) => (_toNullableDouble(v) == null)
+                    ? 'Ingrese una longitud válida'
+                    : null,
+              ),
+              const SizedBox(height: 8),
+
+              TextFormField(
+                controller: _altitudController,
+                decoration: const InputDecoration(
+                  labelText: 'Altitud (msnm)',
+                  prefixIcon: Icon(Icons.height, color: Colors.green, size: 20),
+                  filled: true,
+                  fillColor: Colors.white,
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(
+                    vertical: 8,
+                    horizontal: 8,
+                  ),
+                ),
+                keyboardType: TextInputType.number,
+                validator: (v) => (_toNullableDouble(v) == null)
+                    ? 'Ingrese una altitud válida'
+                    : null,
+              ),
+
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _tipoCultivoController,
+                readOnly: true,
+                decoration: const InputDecoration(
+                  labelText: 'Tipo de Cultivo',
+                  prefixIcon: Icon(Icons.grass, color: Colors.green, size: 20),
+                  filled: true,
+                  fillColor: Colors.white,
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(
+                    vertical: 8,
+                    horizontal: 8,
+                  ),
+                ),
+                onTap: _pickTipoCultivo,
+                validator: (v) =>
+                    (v?.isEmpty ?? true) ? 'Seleccione un cultivo' : null,
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _municipioController,
+                readOnly: true,
+                decoration: const InputDecoration(
+                  labelText: 'Municipio',
+                  prefixIcon: Icon(
+                    Icons.location_city,
+                    color: Colors.green,
+                    size: 20,
+                  ),
+                  filled: true,
+                  fillColor: Colors.white,
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(
+                    vertical: 8,
+                    horizontal: 8,
+                  ),
+                ),
+                onTap: _pickMunicipio,
+                validator: (v) =>
+                    (v?.isEmpty ?? true) ? 'Seleccione un municipio' : null,
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      icon: const Icon(
+                        Icons.cancel,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 10,
+                          horizontal: 18,
+                        ),
+                      ),
+                      label: Text(
+                        'Cancelar',
+                        style: GoogleFonts.montserrat(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      onPressed: clearFormFields,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      icon: Icon(
+                        isEditing ? Icons.edit : Icons.add_circle_outline,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: isEditing
+                            ? Colors.orange
+                            : natureGreen,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 10,
+                          horizontal: 18,
+                        ),
+                      ),
+                      label: Text(
+                        isEditing ? 'Guardar' : 'Agregar',
+                        style: GoogleFonts.montserrat(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      onPressed: addOrUpdateParcela,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
