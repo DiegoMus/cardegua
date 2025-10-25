@@ -742,7 +742,7 @@ class _ParcelasPageState extends State<ParcelasPage>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     if (p.tipoCultivoNombre != null) Text(p.tipoCultivoNombre!),
-                    if (p.area != null) Text('${p.area} ha'),
+                    if (p.area != null) Text('${p.area} cuerdas'),
                     if (p.status == 'pending')
                       const Row(
                         children: [
