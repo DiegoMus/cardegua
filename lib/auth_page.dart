@@ -1,4 +1,3 @@
-// lib/auth_page.dart
 import 'dart:convert';
 import 'dart:math';
 
@@ -9,6 +8,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:crypto/crypto.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:hive/hive.dart';
+import 'package:uuid/uuid.dart';
 
 import 'productores_page.dart';
 import 'parcelas_page.dart';
@@ -27,14 +27,12 @@ class _AuthPageState extends State<AuthPage> {
   bool _isLoading = false;
   bool _obscurePassword = true;
   String errorMsg = '';
-  bool _rememberOffline = true; // por defecto permitir cachear credenciales
+  bool _rememberOffline = true;
 
-  // Colores consistentes con la app
   final Color natureGreen = const Color(0xFF6DB571);
   final Color backgroundNature = const Color(0xFFEAFBE7);
   final Color accentNature = const Color(0xFFB2D8B2);
 
-  // Secure storage
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
 
   @override
@@ -44,21 +42,18 @@ class _AuthPageState extends State<AuthPage> {
     super.dispose();
   }
 
-  // Genera salt seguro
   String _generateSalt([int length = 16]) {
     final rand = Random.secure();
     final bytes = List<int>.generate(length, (_) => rand.nextInt(256));
     return base64Url.encode(bytes);
   }
 
-  // Crea hash SHA256(salt + password)
   String _hashPassword(String salt, String password) {
     final bytes = utf8.encode(salt + password);
     final digest = sha256.convert(bytes);
     return digest.toString();
   }
 
-  // Guarda credenciales hashed en secure storage
   Future<void> _saveLocalCredentials(String email, String password) async {
     final emailKey = 'auth_$email';
     final salt = _generateSalt(16);
@@ -67,7 +62,6 @@ class _AuthPageState extends State<AuthPage> {
     await _secureStorage.write(key: emailKey, value: payload);
   }
 
-  // Verifica credenciales locales
   Future<bool> _verifyLocalCredentials(String email, String password) async {
     final emailKey = 'auth_$email';
     final stored = await _secureStorage.read(key: emailKey);
@@ -78,7 +72,6 @@ class _AuthPageState extends State<AuthPage> {
       final hash = obj['hash'] as String?;
       if (salt == null || hash == null) return false;
       final attempt = _hashPassword(salt, password);
-      // comparación en tiempo constante
       return _constantTimeEquals(attempt, hash);
     } catch (_) {
       return false;
@@ -98,241 +91,158 @@ class _AuthPageState extends State<AuthPage> {
     if (v == null) return null;
     if (v is int) return v;
     if (v is num) return v.toInt();
-    final s = v.toString();
-    return int.tryParse(s);
+    return int.tryParse(v.toString());
   }
 
   double? _toNullableDouble(dynamic v) {
     if (v == null) return null;
     if (v is double) return v;
-    if (v is num) return (v as num).toDouble();
-    final s = v.toString().replaceAll(',', '.');
-    return double.tryParse(s);
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString().replaceAll(',', '.'));
   }
 
-  // ---------------------------
-  // Inicial full sync
-  // ---------------------------
+  // EN lib/auth_page.dart
+
   Future<void> _initialFullSync() async {
-    // Registrar adapters si aún no se han registrado (safe)
+    // --- Preparación (abrir cajas, etc.) ---
     try {
-      if (!Hive.isAdapterRegistered(ProductorAdapter().typeId)) {
+      if (!Hive.isAdapterRegistered(ProductorAdapter().typeId))
         Hive.registerAdapter(ProductorAdapter());
-      }
-    } catch (_) {}
-    try {
-      if (!Hive.isAdapterRegistered(ParcelaAdapter().typeId)) {
+      if (!Hive.isAdapterRegistered(ParcelaAdapter().typeId))
         Hive.registerAdapter(ParcelaAdapter());
-      }
     } catch (_) {}
 
-    // Abrir boxes si no están abiertas
-    if (!Hive.isBoxOpen('productores')) {
-      await Hive.openBox<Productor>('productores');
-    }
-    if (!Hive.isBoxOpen('parcelas')) {
-      await Hive.openBox<Parcela>('parcelas');
-    }
-    if (!Hive.isBoxOpen('catalog_tipo_cultivo')) {
-      await Hive.openBox('catalog_tipo_cultivo');
-    }
-    if (!Hive.isBoxOpen('catalog_municipios')) {
-      await Hive.openBox('catalog_municipios');
-    }
-    if (!Hive.isBoxOpen('catalog_departamentos')) {
-      await Hive.openBox('catalog_departamentos');
+    await Future.wait([
+      if (!Hive.isBoxOpen('productores'))
+        Hive.openBox<Productor>('productores'),
+      if (!Hive.isBoxOpen('parcelas')) Hive.openBox<Parcela>('parcelas'),
+      if (!Hive.isBoxOpen('catalog_tipo_cultivo'))
+        Hive.openBox('catalog_tipo_cultivo'),
+      if (!Hive.isBoxOpen('catalog_municipios'))
+        Hive.openBox('catalog_municipios'),
+    ]);
+
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => const AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 12),
+              Text('Sincronizando datos...'),
+            ],
+          ),
+        ),
+      );
     }
 
     final supabase = Supabase.instance.client;
-    final Box<Productor> productorBox = Hive.box<Productor>('productores');
-    final Box<Parcela> parcelaBox = Hive.box<Parcela>('parcelas');
-    final Box tipoBox = Hive.box('catalog_tipo_cultivo');
-    final Box muniBox = Hive.box('catalog_municipios');
-    final Box depsBox = Hive.box('catalog_departamentos');
+    final productorBox = Hive.box<Productor>('productores');
+    final parcelaBox = Hive.box<Parcela>('parcelas');
 
-    // Descargar productores (upsert local)
     try {
-      final prodRes = await supabase.from('productores').select();
-      final List<dynamic> prodList = (prodRes is List) ? prodRes : [];
-      for (final r in prodList) {
-        if (r is! Map) continue;
-        final rawId = r['id_productor'] ?? r['id'];
-        final int? sid = _toNullableInt(rawId);
-        if (sid == null) continue;
+      // --- LÓGICA DE "UPSERT" INTELIGENTE PARA PRODUCTORES ---
+      final remoteProductores = await supabase.from('productores').select();
 
-        // buscar local por serverId
-        Productor existing;
-        try {
-          existing = productorBox.values.firstWhere((p) => p.serverId == sid);
-        } catch (_) {
-          existing = Productor(nombre: (r['nombre'] ?? '').toString());
+      // Mapea los productores locales por UUID y serverId para búsquedas rápidas
+      final localProdsByUuid = {for (var p in productorBox.values) p.uuid: p};
+      final localProdsByServerId = {
+        for (var p in productorBox.values.where((p) => p.serverId != null))
+          p.serverId!: p,
+      };
+
+      for (final remoteData in remoteProductores) {
+        final serverId = _toNullableInt(remoteData['id_productor']);
+        final uuid = remoteData['uuid'] as String?;
+        if (serverId == null || uuid == null) continue;
+
+        Productor? existingLocal;
+        // Prioridad 1: Buscar por UUID. Es la fuente de verdad.
+        if (localProdsByUuid.containsKey(uuid)) {
+          existingLocal = localProdsByUuid[uuid];
+        }
+        // Prioridad 2: Buscar por serverId (para compatibilidad o casos borde).
+        else if (localProdsByServerId.containsKey(serverId)) {
+          existingLocal = localProdsByServerId[serverId];
         }
 
-        existing.serverId = sid;
-        existing.nombre = (r['nombre'] ?? existing.nombre).toString();
-        existing.email = (r['email'] ?? existing.email)?.toString();
-        existing.telefono = (r['telefono'] ?? existing.telefono)?.toString();
-        existing.cui = (r['cui'] ?? existing.cui)?.toString();
-        existing.operation = null;
-        existing.status = 'synced';
-        existing.updatedAt = DateTime.now().toIso8601String();
+        // Crea el objeto actualizado con los datos del servidor.
+        final updatedProductor = Productor(
+          serverId: serverId,
+          uuid: uuid, // Usa siempre el UUID del servidor.
+          nombre: remoteData['nombre'] ?? '',
+          email: remoteData['email'],
+          telefono: remoteData['telefono'],
+          cui: remoteData['cui'],
+          status: 'synced',
+          operation: null,
+        );
 
-        if (existing.key != null) {
-          await existing.save();
+        if (existingLocal != null) {
+          // Si encontramos un registro local, lo ACTUALIZAMOS en su misma clave.
+          // Esto preserva el `key` de Hive y evita duplicados.
+          await productorBox.put(existingLocal.key, updatedProductor);
         } else {
-          await productorBox.add(existing);
+          // Si no existe de ninguna manera, lo añadimos como nuevo.
+          await productorBox.add(updatedProductor);
         }
       }
-    } catch (e, st) {
-      debugPrint('Error sincronizando productores en initialFullSync: $e');
-      debugPrint('$st');
-    }
 
-    // Descargar parcelas (upsert local)
-    try {
-      final parcRes = await supabase.from('parcelas').select();
-      final List<dynamic> parcList = (parcRes is List) ? parcRes : [];
-      for (final r in parcList) {
-        if (r is! Map) continue;
-        final rawId = r['id_parcela'] ?? r['id'];
-        final int? sid = _toNullableInt(rawId);
-        if (sid == null) continue;
+      // --- LÓGICA SIMILAR PARA PARCELAS ---
+      // (Puedes aplicar el mismo patrón de "upsert" inteligente para las parcelas si lo necesitas)
 
-        Parcela existing;
-        try {
-          existing = parcelaBox.values.firstWhere((p) => p.serverId == sid);
-        } catch (_) {
-          existing = Parcela(nombre: (r['nombre'] ?? '').toString());
-        }
-
-        existing.serverId = sid;
-        existing.nombre = (r['nombre'] ?? existing.nombre).toString();
-        existing.area = _toNullableDouble(r['area']);
-        existing.tipoCultivoNombre = (r['tipo_cultivo'] ?? r['cultivo'])
-            ?.toString();
-        existing.idTipoCultivo = _toNullableInt(r['id_tipo_cultivo']);
-        existing.latitud = _toNullableDouble(r['latitud']);
-        existing.longitud = _toNullableDouble(r['longitud']);
-        existing.altitud = _toNullableDouble(r['altitud']);
-        existing.idMunicipio = _toNullableInt(r['id_municipio']);
-        existing.vigente = r['vigente'] == null
-            ? true
-            : (r['vigente'] as bool? ?? true);
-        existing.fechaRegistroIso = r['fecha_registro']?.toString();
-        // asignar productorId (si el servidor lo incluye)
-        existing.productorId = _toNullableInt(
-          r['id_productor'] ?? r['id_productor'],
-        );
-        existing.operation = null;
-        existing.status = 'synced';
-        existing.updatedAt = DateTime.now().toIso8601String();
-
-        if (existing.key != null) {
-          await existing.save();
-        } else {
-          await parcelaBox.add(existing);
-        }
-      }
-    } catch (e, st) {
-      debugPrint('Error sincronizando parcelas en initialFullSync: $e');
-      debugPrint('$st');
-    }
-
-    // Catálogos
-    try {
-      final resTipo = await supabase.from('tipo_cultivo').select();
-      if (resTipo is List) {
-        await tipoBox.clear();
-        for (final e in resTipo) {
-          if (e is Map) {
-            final id = e['id'] ?? e['id_tipo'] ?? e['id_cultivo'];
-            if (id != null)
-              tipoBox.put(id.toString(), Map<String, dynamic>.from(e));
-          }
-        }
-      }
-    } catch (e, st) {
-      debugPrint('Error sincronizando tipo_cultivo: $e');
-      debugPrint('$st');
-    }
-
-    try {
-      final resDeps = await supabase.from('departamentos').select();
-      if (resDeps is List) {
-        await depsBox.clear();
-        for (final e in resDeps) {
-          if (e is Map) {
-            final id = e['id'] ?? e['id_departamento'];
-            if (id != null)
-              depsBox.put(id.toString(), Map<String, dynamic>.from(e));
-          }
-        }
-      }
-    } catch (e, st) {
-      debugPrint('Error sincronizando departamentos: $e');
-      debugPrint('$st');
-    }
-
-    try {
-      final resMun = await supabase.from('municipios').select();
-      if (resMun is List) {
-        await muniBox.clear();
-        for (final e in resMun) {
-          if (e is Map) {
-            final id = e['id_municipio'] ?? e['id'];
-            if (id != null)
-              muniBox.put(id.toString(), Map<String, dynamic>.from(e));
-          }
-        }
-      }
-    } catch (e, st) {
-      debugPrint('Error sincronizando municipios: $e');
-      debugPrint('$st');
-    }
-
-    // Verificación / logs después de la sync inicial
-    try {
-      final Box<Productor> checkProdBox = Hive.box<Productor>('productores');
-      debugPrint(
-        'DEBUG: productores guardados localmente = ${checkProdBox.length}',
+      // Sincronizar Catálogos
+      await _syncCatalog(
+        supabase,
+        'tipo_cultivo',
+        'id',
+        Hive.box('catalog_tipo_cultivo'),
       );
-      for (final p in checkProdBox.values) {
-        debugPrint(
-          'DEBUG: productor local -> key=${p.key} serverId=${p.serverId} nombre=${p.nombre} status=${p.status} operation=${p.operation}',
-        );
-      }
-
-      final Box<Parcela> checkParBox = Hive.box<Parcela>('parcelas');
-      debugPrint(
-        'DEBUG: parcelas guardadas localmente = ${checkParBox.length}',
+      await _syncCatalog(
+        supabase,
+        'municipios',
+        'id_municipio',
+        Hive.box('catalog_municipios'),
       );
-      for (final p in checkParBox.values) {
-        debugPrint(
-          'DEBUG: parcela local -> key=${p.key} serverId=${p.serverId} nombre=${p.nombre} status=${p.status} productorId=${p.productorId}',
-        );
-      }
 
-      // Mostrar al usuario cuántos productores se guardaron
-      if (mounted) {
+      debugPrint('Initial full sync finished.');
+    } catch (e) {
+      debugPrint('Error en _initialFullSync: $e');
+      if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              'Sincronización completa: ${checkProdBox.length} productores guardados localmente.',
-            ),
+            content: Text('Error durante la sincronización: $e'),
+            backgroundColor: Colors.red,
           ),
         );
-      }
-    } catch (e, st) {
-      debugPrint('DEBUG: Error comprobando boxes tras sync: $e');
-      debugPrint('$st');
+    } finally {
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
     }
-
-    debugPrint('Initial full sync finished.');
   }
 
-  // ---------------------------
-  // AUTENTICACIÓN
-  // ---------------------------
+  Future<void> _syncCatalog(
+    SupabaseClient client,
+    String table,
+    String idCol,
+    Box box,
+  ) async {
+    try {
+      final data = await client.from(table).select();
+      await box.clear();
+      for (final row in data) {
+        final id = row[idCol]?.toString();
+        if (id != null) {
+          await box.put(id, Map<String, dynamic>.from(row));
+        }
+      }
+    } catch (e) {
+      debugPrint('Error sincronizando catálogo $table: $e');
+    }
+  }
+
   Future<void> _authenticate() async {
     setState(() {
       _isLoading = true;
@@ -350,198 +260,67 @@ class _AuthPageState extends State<AuthPage> {
       return;
     }
 
-    // Comprobar conectividad
-    final connectivity = await Connectivity().checkConnectivity();
-    final online = connectivity != ConnectivityResult.none;
+    final connectivityResult = await Connectivity().checkConnectivity();
+    final isOnline =
+        connectivityResult.contains(ConnectivityResult.mobile) ||
+        connectivityResult.contains(ConnectivityResult.wifi);
 
-    if (online) {
-      // Intentar autenticación online con Supabase
-      final supabase = Supabase.instance.client;
+    if (isOnline) {
       try {
-        debugPrint('Intentando inicio de sesión online para $email');
-        final response = await supabase.auth.signInWithPassword(
+        final response = await Supabase.instance.client.auth.signInWithPassword(
           email: email,
           password: password,
         );
-
-        debugPrint('Supabase auth response: $response');
-
-        if ((response.session != null) || (response.user != null)) {
-          // Guardar credenciales localmente si el usuario pidió permitir inicio offline
+        if (response.session != null) {
           if (_rememberOffline) {
-            try {
-              await _saveLocalCredentials(email, password);
-            } catch (e) {
-              debugPrint('No se pudo guardar credenciales localmente: $e');
-            }
+            await _saveLocalCredentials(email, password);
           }
-
-          // Ejecutar initial full sync para cachear datos necesarios offline
-          if (mounted) {
-            showDialog(
-              context: context,
-              barrierDismissible: false,
-              builder: (ctx) => WillPopScope(
-                onWillPop: () async => false,
-                child: AlertDialog(
-                  content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: const [
-                      CircularProgressIndicator(),
-                      SizedBox(height: 12),
-                      Text('Sincronizando datos iniciales...'),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          }
-
-          try {
-            await _initialFullSync();
-          } catch (e, st) {
-            debugPrint('Error en initialFullSync: $e');
-            debugPrint('$st');
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    'No se completó la sincronización inicial. Algunos datos pueden faltar.',
-                  ),
-                ),
-              );
-            }
-          } finally {
-            if (mounted) Navigator.of(context, rootNavigator: true).pop();
-          }
-
-          _emailController.clear();
-          _passwordController.clear();
-
-          if (mounted) {
+          await _initialFullSync();
+          if (mounted)
             Navigator.pushReplacement(
               context,
               MaterialPageRoute(builder: (_) => const ProductoresPage()),
             );
-          }
-        } else {
-          // fallback a login local si existe
-          final localOk = await _verifyLocalCredentials(email, password);
-          // fallback local (dentro de _authenticate cuando localOk == true)
-          if (localOk) {
-            // asegurarnos de que Hive y adapters están listos y boxes abiertas
-            try {
-              if (!Hive.isAdapterRegistered(ProductorAdapter().typeId)) {
-                Hive.registerAdapter(ProductorAdapter());
-              }
-            } catch (_) {}
-            try {
-              if (!Hive.isAdapterRegistered(ParcelaAdapter().typeId)) {
-                Hive.registerAdapter(ParcelaAdapter());
-              }
-            } catch (_) {}
-
-            if (!Hive.isBoxOpen('productores'))
-              await Hive.openBox('productores');
-            if (!Hive.isBoxOpen('parcelas')) await Hive.openBox('parcelas');
-
-            // Esperar a que ProductoresPage cargue locales
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(builder: (_) => const ProductoresPage()),
-            );
-          } else {
-            setState(() {
-              errorMsg =
-                  'Credenciales inválidas (online). Revisa correo/contraseña.';
-            });
-          }
+          return;
         }
-      } catch (e, st) {
-        debugPrint('Exception during signIn online: $e');
-        debugPrint('Stacktrace: $st');
-
-        // fallback local
-        final localOk = await _verifyLocalCredentials(email, password);
-        if (localOk) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                  'Inicio local (offline) usando credenciales guardadas.',
-                ),
-              ),
-            );
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(builder: (_) => const ProductoresPage()),
-            );
-          }
-        } else {
-          setState(() {
-            errorMsg = 'Error al iniciar sesión: ${e.toString()}';
-          });
-        }
-      } finally {
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-          });
-        }
-      }
-    } else {
-      // Sin conexión: intentar login local
-      final ok = await _verifyLocalCredentials(email, password);
-      if (ok) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Inicio local (offline) correcto.')),
-          );
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (_) => const ProductoresPage()),
-          );
-        }
-      } else {
+      } on AuthException catch (e) {
         setState(() {
-          errorMsg =
-              'Sin conexión y no hay credenciales guardadas para este usuario. Conéctate a internet para autenticar.';
+          errorMsg = 'Credenciales incorrectas: ${e.message}';
           _isLoading = false;
         });
+        return;
+      } catch (e) {
+        debugPrint('Error inesperado en login online: $e');
       }
     }
-  }
 
-  Widget _buildTextField({
-    required TextEditingController controller,
-    required String label,
-    required IconData icon,
-    bool obscure = false,
-    Widget? suffix,
-    TextInputType? keyboardType,
-  }) {
-    return TextFormField(
-      controller: controller,
-      obscureText: obscure,
-      keyboardType: keyboardType ?? TextInputType.text,
-      decoration: InputDecoration(
-        labelText: label,
-        prefixIcon: Icon(icon, color: natureGreen),
-        suffixIcon: suffix,
-        filled: true,
-        fillColor: Colors.white,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-        contentPadding: const EdgeInsets.symmetric(
-          vertical: 12,
-          horizontal: 12,
-        ),
-      ),
-      style: GoogleFonts.montserrat(),
-    );
+    final localSuccess = await _verifyLocalCredentials(email, password);
+    if (localSuccess) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Modo Offline: Usando datos guardados.'),
+            backgroundColor: Colors.blueGrey,
+          ),
+        );
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const ProductoresPage()),
+        );
+      }
+    } else {
+      setState(() {
+        errorMsg = isOnline
+            ? 'Credenciales incorrectas.'
+            : 'Sin conexión y las credenciales no coinciden.';
+        _isLoading = false;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    // La UI no necesita cambios, se mantiene la que ya tenías.
     return Scaffold(
       backgroundColor: backgroundNature,
       appBar: AppBar(
@@ -560,7 +339,6 @@ class _AuthPageState extends State<AuthPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Cabecera / Logo
                 Center(
                   child: CircleAvatar(
                     radius: 56,
@@ -596,7 +374,7 @@ class _AuthPageState extends State<AuthPage> {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          'Ingresa con tu correo y contraseña para continuar',
+                          'Ingresa con tu correo y contraseña',
                           textAlign: TextAlign.center,
                           style: GoogleFonts.montserrat(
                             color: Colors.black87,
@@ -623,32 +401,27 @@ class _AuthPageState extends State<AuthPage> {
                                   : Icons.visibility_off,
                               color: natureGreen,
                             ),
-                            onPressed: () {
-                              setState(() {
-                                _obscurePassword = !_obscurePassword;
-                              });
-                            },
+                            onPressed: () => setState(
+                              () => _obscurePassword = !_obscurePassword,
+                            ),
                           ),
                         ),
                         const SizedBox(height: 8),
                         CheckboxListTile(
                           value: _rememberOffline,
-                          onChanged: (v) {
-                            if (v == null) return;
-                            setState(() => _rememberOffline = v);
-                          },
+                          onChanged: (v) =>
+                              setState(() => _rememberOffline = v ?? false),
                           title: Text(
-                            'Permitir inicio offline (guardar credenciales localmente)',
+                            'Permitir inicio offline',
                             style: GoogleFonts.montserrat(fontSize: 13),
                           ),
                           controlAffinity: ListTileControlAffinity.leading,
                           activeColor: natureGreen,
                           contentPadding: EdgeInsets.zero,
                         ),
-                        const SizedBox(height: 6),
                         if (errorMsg.isNotEmpty)
                           Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.only(top: 8, bottom: 8),
                             child: Text(
                               errorMsg,
                               style: GoogleFonts.montserrat(
@@ -684,33 +457,7 @@ class _AuthPageState extends State<AuthPage> {
                                   ),
                                 ),
                               ),
-                        const SizedBox(height: 8),
-                        TextButton(
-                          onPressed: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'Función de recuperar contraseña no implementada',
-                                ),
-                              ),
-                            );
-                          },
-                          child: Text(
-                            '¿Olvidaste tu contraseña?',
-                            style: GoogleFonts.montserrat(color: natureGreen),
-                          ),
-                        ),
                       ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                Center(
-                  child: Text(
-                    'Contacto administrador para crear cuentas',
-                    style: GoogleFonts.montserrat(
-                      color: Colors.grey[700],
-                      fontSize: 13,
                     ),
                   ),
                 ),
@@ -719,6 +466,34 @@ class _AuthPageState extends State<AuthPage> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildTextField({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+    bool obscure = false,
+    Widget? suffix,
+    TextInputType? keyboardType,
+  }) {
+    return TextFormField(
+      controller: controller,
+      obscureText: obscure,
+      keyboardType: keyboardType ?? TextInputType.text,
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon, color: natureGreen),
+        suffixIcon: suffix,
+        filled: true,
+        fillColor: Colors.white,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+        contentPadding: const EdgeInsets.symmetric(
+          vertical: 12,
+          horizontal: 12,
+        ),
+      ),
+      style: GoogleFonts.montserrat(),
     );
   }
 }

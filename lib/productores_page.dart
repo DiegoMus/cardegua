@@ -5,35 +5,32 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:hive/hive.dart';
+import 'package:uuid/uuid.dart';
 
 import 'parcelas_page.dart';
+import 'sync_service.dart';
 
-// MODELO Hive + ADAPTER MANUAL (no codegen) --------------------------------
+// --- Modelo Hive + ADAPTER MANUAL (CORREGIDO) ---
 @HiveType(typeId: 0)
 class Productor extends HiveObject {
   @HiveField(0)
-  int? serverId; // id_productor en Supabase
-
+  int? serverId;
   @HiveField(1)
   String nombre;
-
   @HiveField(2)
   String? email;
-
   @HiveField(3)
   String? telefono;
-
   @HiveField(4)
   String? cui;
-
   @HiveField(5)
-  String? operation; // 'create' | 'update' | 'delete' | null
-
+  String? operation;
   @HiveField(6)
-  String status; // 'pending' | 'synced'
-
+  String status;
   @HiveField(7)
   String updatedAt;
+  @HiveField(8)
+  String uuid;
 
   Productor({
     this.serverId,
@@ -44,18 +41,9 @@ class Productor extends HiveObject {
     this.operation,
     this.status = 'pending',
     String? updatedAt,
-  }) : updatedAt = updatedAt ?? DateTime.now().toIso8601String();
-
-  Map<String, dynamic> toMap() => {
-    'id_productor': serverId,
-    'nombre': nombre,
-    'email': email,
-    'telefono': telefono,
-    'cui': cui,
-    'operation': operation,
-    'status': status,
-    'updatedAt': updatedAt,
-  };
+    String? uuid,
+  }) : uuid = uuid ?? const Uuid().v4(),
+       updatedAt = updatedAt ?? DateTime.now().toIso8601String();
 }
 
 class ProductorAdapter extends TypeAdapter<Productor> {
@@ -65,22 +53,11 @@ class ProductorAdapter extends TypeAdapter<Productor> {
   @override
   Productor read(BinaryReader reader) {
     final numOfFields = reader.readByte();
-    final fields = <int, dynamic>{};
-    for (var i = 0; i < numOfFields; i++) {
-      final key = reader.readByte() as int;
-      final value = reader.read();
-      fields[key] = value;
-    }
-    final serverIdRaw = fields[0];
-    int? serverId;
-    if (serverIdRaw is int)
-      serverId = serverIdRaw;
-    else if (serverIdRaw is num)
-      serverId = serverIdRaw.toInt();
-    else
-      serverId = int.tryParse(serverIdRaw?.toString() ?? '');
+    final fields = <int, dynamic>{
+      for (var i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
+    };
     return Productor(
-      serverId: serverId,
+      serverId: fields[0] as int?,
       nombre: fields[1] as String,
       email: fields[2] as String?,
       telefono: fields[3] as String?,
@@ -88,13 +65,15 @@ class ProductorAdapter extends TypeAdapter<Productor> {
       operation: fields[5] as String?,
       status: fields[6] as String? ?? 'pending',
       updatedAt: fields[7] as String?,
+      uuid: fields[8] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, Productor obj) {
+    // CORRECCIÓN: El número de campos es 9 (del 0 al 8).
     writer
-      ..writeByte(8)
+      ..writeByte(9)
       ..writeByte(0)
       ..write(obj.serverId)
       ..writeByte(1)
@@ -110,11 +89,13 @@ class ProductorAdapter extends TypeAdapter<Productor> {
       ..writeByte(6)
       ..write(obj.status)
       ..writeByte(7)
-      ..write(obj.updatedAt);
+      ..write(obj.updatedAt)
+      ..writeByte(8)
+      ..write(obj.uuid); // Ahora el UUID se guarda siempre.
   }
 }
-// ---------------------------------------------------------------------------
 
+// --- PÁGINA DE PRODUCTORES ---
 class ProductoresPage extends StatefulWidget {
   const ProductoresPage({super.key});
 
@@ -142,8 +123,7 @@ class _ProductoresPageState extends State<ProductoresPage>
 
   late Box<Productor> _box;
 
-  late StreamSubscription<dynamic> _connectivitySub;
-  dynamic _lastConnectivity;
+  late StreamSubscription<List<ConnectivityResult>> _connectivitySub;
   bool _isOnline = false;
 
   @override
@@ -156,7 +136,6 @@ class _ProductoresPageState extends State<ProductoresPage>
     _searchController.addListener(() {
       filterProductores(_searchController.text);
     });
-
     _initBoxAndLoad();
   }
 
@@ -170,6 +149,82 @@ class _ProductoresPageState extends State<ProductoresPage>
     _searchController.dispose();
     _connectivitySub.cancel();
     super.dispose();
+  }
+
+  // --- NUEVA FUNCIÓN CENTRALIZADA PARA GUARDAR Y SINCRONIZAR ---
+  Future<void> _submitProductor() async {
+    if (_nombreController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('El nombre del productor es obligatorio.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // 1. Mostrar diálogo de carga SI ESTAMOS ONLINE para bloquear la UI
+    if (_isOnline) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => const AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 12),
+              Text('Guardando productor...'),
+            ],
+          ),
+        ),
+      );
+    }
+
+    try {
+      // 2. Crear o actualizar el productor en la base de datos local (Hive)
+      if (isEditing && editingProductor != null) {
+        final p = editingProductor!;
+        p.nombre = _nombreController.text;
+        p.email = _emailController.text.isEmpty ? null : _emailController.text;
+        p.telefono = _telephoneController.text.isEmpty
+            ? null
+            : _telephoneController.text;
+        p.cui = _cuiController.text.isEmpty ? null : _cuiController.text;
+        p.operation = (p.serverId == null) ? 'create' : 'update';
+        p.status = 'pending';
+        p.updatedAt = DateTime.now().toIso8601String();
+        await p.save();
+      } else {
+        final p = Productor(
+          nombre: _nombreController.text,
+          email: _emailController.text.isEmpty ? null : _emailController.text,
+          telefono: _telephoneController.text.isEmpty
+              ? null
+              : _telephoneController.text,
+          cui: _cuiController.text.isEmpty ? null : _cuiController.text,
+          operation: 'create',
+          status: 'pending',
+        );
+        await _box.add(p);
+      }
+
+      // 3. Si estamos online, ESPERAR a que la sincronización termine.
+      if (_isOnline) {
+        await SyncService.syncAllPendingData();
+      }
+    } catch (e) {
+      debugPrint("Error en _submitProductor: $e");
+    } finally {
+      // 4. Cerrar el diálogo de carga (si se mostró)
+      if (_isOnline && mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+    }
+
+    // 5. Limpiar el formulario y recargar la lista de la UI
+    clearFormFields();
+    await loadLocalProductores();
   }
 
   void clearFormFields() {
@@ -186,71 +241,18 @@ class _ProductoresPageState extends State<ProductoresPage>
 
   void filterProductores(String query) {
     final search = query.toLowerCase();
-    // No llames a setState aquí, deja que loadLocalProductores lo controle
-    filteredProductores = productores.where((p) {
-      final nombre = (p.nombre).toLowerCase();
-      final cui = (p.cui ?? '').toLowerCase();
-      return nombre.contains(search) || cui.contains(search);
-    }).toList();
-  }
-
-  Future<void> loadLocalProductores() async {
-    final List<Productor> allProductores = _box.values.toList();
-    productores = allProductores.where((p) => p.operation != 'delete').toList();
-
-    // Filtra y luego actualiza la UI en un solo paso
     setState(() {
-      filterProductores(_searchController.text);
+      filteredProductores = productores.where((p) {
+        final nombre = p.nombre.toLowerCase();
+        final cui = (p.cui ?? '').toLowerCase();
+        return nombre.contains(search) || cui.contains(search);
+      }).toList();
     });
   }
 
-  Future<void> addProductor() async {
-    final p = Productor(
-      serverId: null,
-      nombre: _nombreController.text,
-      email: _emailController.text.isEmpty ? null : _emailController.text,
-      telefono: _telephoneController.text.isEmpty
-          ? null
-          : _telephoneController.text,
-      cui: _cuiController.text.isEmpty ? null : _cuiController.text,
-      operation: 'create',
-      status: 'pending',
-    );
-    await _box.add(p);
-    await loadLocalProductores();
-    clearFormFields();
-
-    if (_isOnline) {
-      await syncPending();
-    }
-  }
-
-  Future<void> updateProductorLocal(
-    Productor p,
-    String nombre,
-    String email,
-    String telefono,
-    String cui,
-  ) async {
-    p.nombre = nombre;
-    p.email = email.isEmpty ? null : email;
-    p.telefono = telefono.isEmpty ? null : telefono;
-    p.cui = cui.isEmpty ? null : cui;
-    if (p.serverId == null) {
-      p.operation = 'create';
-    } else {
-      p.operation = 'update';
-    }
-    p.status = 'pending';
-    p.updatedAt = DateTime.now().toIso8601String();
-    await p.save();
-
-    await loadLocalProductores();
-    clearFormFields();
-
-    if (_isOnline) {
-      await syncPending();
-    }
+  Future<void> loadLocalProductores() async {
+    productores = _box.values.where((p) => p.operation != 'delete').toList();
+    filterProductores(_searchController.text);
   }
 
   Future<void> deleteProductorLocal(Productor p) async {
@@ -259,14 +261,11 @@ class _ProductoresPageState extends State<ProductoresPage>
     } else {
       p.operation = 'delete';
       p.status = 'pending';
-      p.updatedAt = DateTime.now().toIso8601String();
       await p.save();
     }
-
     await loadLocalProductores();
-
     if (_isOnline) {
-      await syncPending();
+      await SyncService.syncAllPendingData();
     }
   }
 
@@ -289,76 +288,6 @@ class _ProductoresPageState extends State<ProductoresPage>
     });
   }
 
-  Future<void> syncPending() async {
-    if (!_isOnline) return;
-
-    final supabase = Supabase.instance.client;
-    final pending = _box.values.where((p) => p.status == 'pending').toList();
-
-    for (final p in pending) {
-      final op = p.operation;
-      try {
-        if (op == 'create') {
-          final insertMap = {
-            'nombre': p.nombre,
-            'email': p.email,
-            'telefono': p.telefono,
-            'cui': p.cui,
-          };
-          final res = await supabase
-              .from('productores')
-              .insert(insertMap)
-              .select()
-              .single();
-
-          p.serverId = res['id_productor'];
-          p.operation = null;
-          p.status = 'synced';
-          await p.save();
-        } else if (op == 'update') {
-          final serverId = p.serverId;
-          if (serverId != null) {
-            await supabase
-                .from('productores')
-                .update({
-                  'nombre': p.nombre,
-                  'email': p.email,
-                  'telefono': p.telefono,
-                  'cui': p.cui,
-                })
-                .eq('id_productor', serverId);
-            p.operation = null;
-            p.status = 'synced';
-            await p.save();
-          } else {
-            p.operation = 'create';
-            await p.save();
-          }
-        } else if (op == 'delete') {
-          final serverId = p.serverId;
-          if (serverId != null) {
-            await supabase
-                .from('productores')
-                .delete()
-                .eq('id_productor', serverId);
-          }
-          await p.delete();
-        } else {
-          p.status = 'synced';
-          p.operation = null;
-          await p.save();
-        }
-      } catch (e, st) {
-        debugPrint(
-          'Error sincronizando registro local key=${p.key} op=$op: $e',
-        );
-        debugPrint('$st');
-      }
-    }
-
-    await loadLocalProductores();
-  }
-
   Future<void> _initBoxAndLoad() async {
     try {
       if (!Hive.isAdapterRegistered(ProductorAdapter().typeId)) {
@@ -374,21 +303,24 @@ class _ProductoresPageState extends State<ProductoresPage>
     await loadLocalProductores();
 
     final conn = Connectivity();
-    _lastConnectivity = await conn.checkConnectivity();
+    final initialResult = await conn.checkConnectivity();
     _isOnline =
-        _normalizeConnectivity(_lastConnectivity) != ConnectivityResult.none;
+        initialResult.contains(ConnectivityResult.mobile) ||
+        initialResult.contains(ConnectivityResult.wifi);
     setState(() {});
 
     _connectivitySub = conn.onConnectivityChanged.listen((result) async {
-      final now = _normalizeConnectivity(result);
-      setState(() {
-        _isOnline = now != ConnectivityResult.none;
-      });
-
-      if (_isOnline) {
-        await manualRefresh();
+      final newStatus =
+          result.contains(ConnectivityResult.mobile) ||
+          result.contains(ConnectivityResult.wifi);
+      if (_isOnline != newStatus) {
+        setState(() {
+          _isOnline = newStatus;
+        });
+        if (newStatus) {
+          await manualRefresh();
+        }
       }
-      _lastConnectivity = result;
     });
 
     if (_isOnline) {
@@ -396,79 +328,49 @@ class _ProductoresPageState extends State<ProductoresPage>
     }
   }
 
-  ConnectivityResult _normalizeConnectivity(dynamic value) {
-    try {
-      if (value == null) return ConnectivityResult.none;
-      if (value is ConnectivityResult) return value;
-      if (value is List && value.isNotEmpty) {
-        final first = value.first;
-        if (first is ConnectivityResult) return first;
-        if (first is String) {
-          final s = first.toLowerCase();
-          if (s.contains('wifi')) return ConnectivityResult.wifi;
-          if (s.contains('mobile') || s.contains('cellular'))
-            return ConnectivityResult.mobile;
-        }
-      }
-    } catch (_) {}
-    return ConnectivityResult.none;
-  }
-
   Future<void> fetchProductores() async {
     if (!_isOnline) {
       await loadLocalProductores();
       return;
     }
-
     try {
-      final supabase = Supabase.instance.client;
-      final result = await supabase.from('productores').select();
-      final List<dynamic> remote = (result is List) ? result : [];
+      final result = await Supabase.instance.client
+          .from('productores')
+          .select();
+      for (final r in result) {
+        final serverId = r['id_productor'] as int?;
+        final uuid = r['uuid'] as String?;
+        if (serverId == null || uuid == null) continue;
 
-      final localByServerId = <int, Productor>{};
-      for (final p in _box.values) {
-        if (p.serverId != null) localByServerId[p.serverId!] = p;
-      }
+        Productor? local;
+        try {
+          local = _box.values.firstWhere((p) => p.uuid == uuid);
+        } catch (_) {}
 
-      for (final r in remote) {
-        if (r is! Map) continue;
-        final rawId = r['id_productor'] ?? r['id'];
-        final serverId = (rawId is int)
-            ? rawId
-            : int.tryParse(rawId?.toString() ?? '');
-        if (serverId == null) continue;
-
-        final nombre = (r['nombre'] ?? '').toString();
-        final email = r['email']?.toString();
-        final telefono = r['telefono']?.toString();
-        final cui = r['cui']?.toString();
-
-        if (localByServerId.containsKey(serverId)) {
-          final local = localByServerId[serverId]!;
-          if (local.operation == null) {
-            local.nombre = nombre;
-            local.email = email;
-            local.telefono = telefono;
-            local.cui = cui;
-            local.status = 'synced';
-            await local.save();
-          }
-        } else {
+        if (local == null) {
           final np = Productor(
             serverId: serverId,
-            nombre: nombre,
-            email: email,
-            telefono: telefono,
-            cui: cui,
+            nombre: r['nombre'] ?? '',
+            email: r['email'],
+            telefono: r['telefono'],
+            cui: r['cui'],
             status: 'synced',
             operation: null,
+            uuid: uuid,
           );
           await _box.add(np);
+        } else if (local.operation == null) {
+          local.nombre = r['nombre'] ?? local.nombre;
+          local.email = r['email'] ?? local.email;
+          local.telefono = r['telefono'] ?? local.telefono;
+          local.cui = r['cui'] ?? local.cui;
+          local.serverId = serverId;
+          local.status = 'synced';
+          await local.save();
         }
       }
-    } catch (e, st) {
+    } catch (e) {
       debugPrint('Error fetchProductores: $e');
-      debugPrint('$st');
     } finally {
       await loadLocalProductores();
     }
@@ -477,7 +379,7 @@ class _ProductoresPageState extends State<ProductoresPage>
   Future<void> manualRefresh() async {
     setState(() => loading = true);
     if (_isOnline) {
-      await syncPending();
+      await SyncService.syncAllPendingData();
       await fetchProductores();
     } else {
       await loadLocalProductores();
@@ -514,7 +416,6 @@ class _ProductoresPageState extends State<ProductoresPage>
             fontWeight: FontWeight.bold,
           ),
         ),
-        elevation: 0,
         actions: [
           IconButton(
             icon: Icon(
@@ -687,40 +588,22 @@ class _ProductoresPageState extends State<ProductoresPage>
                                       shape: RoundedRectangleBorder(
                                         borderRadius: BorderRadius.circular(8),
                                       ),
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 10,
-                                        horizontal: 18,
-                                      ),
                                     ),
                                     label: Text(
-                                      isEditing
-                                          ? 'Guardar edición'
-                                          : 'Agregar Productor',
+                                      isEditing ? 'Guardar' : 'Agregar',
                                       style: GoogleFonts.montserrat(
                                         color: Colors.white,
                                         fontWeight: FontWeight.bold,
                                       ),
                                     ),
-                                    onPressed: () {
-                                      if (isEditing &&
-                                          editingProductor != null) {
-                                        updateProductorLocal(
-                                          editingProductor!,
-                                          _nombreController.text,
-                                          _emailController.text,
-                                          _telephoneController.text,
-                                          _cuiController.text,
-                                        );
-                                      } else {
-                                        addProductor();
-                                      }
-                                    },
+                                    onPressed:
+                                        _submitProductor, // ¡AQUÍ SE USA LA NUEVA FUNCIÓN!
                                   ),
                                 ),
                                 const SizedBox(width: 10),
                                 Expanded(
                                   child: ElevatedButton.icon(
-                                    icon: Icon(
+                                    icon: const Icon(
                                       Icons.cancel,
                                       color: Colors.white,
                                       size: 20,
@@ -729,10 +612,6 @@ class _ProductoresPageState extends State<ProductoresPage>
                                       backgroundColor: Colors.red,
                                       shape: RoundedRectangleBorder(
                                         borderRadius: BorderRadius.circular(8),
-                                      ),
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 10,
-                                        horizontal: 18,
                                       ),
                                     ),
                                     label: Text(
@@ -757,20 +636,23 @@ class _ProductoresPageState extends State<ProductoresPage>
                     builder: (context, child) {
                       return Column(
                         children: [
-                          ...filteredProductores.asMap().entries.map((entry) {
-                            final i = entry.key;
-                            final productor = entry.value;
+                          if (filteredProductores.isEmpty && !loading)
+                            Padding(
+                              padding: const EdgeInsets.all(20),
+                              child: Text(
+                                'No se encontraron productores.',
+                                style: GoogleFonts.montserrat(
+                                  color: Colors.grey,
+                                  fontSize: 16,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          ...filteredProductores.map((productor) {
                             return FadeTransition(
                               opacity: CurvedAnimation(
                                 parent: _animationController,
-                                curve: Interval(
-                                  i /
-                                      (filteredProductores.isEmpty
-                                          ? 1
-                                          : filteredProductores.length),
-                                  1.0,
-                                  curve: Curves.easeIn,
-                                ),
+                                curve: Curves.easeIn,
                               ),
                               child: Card(
                                 margin: const EdgeInsets.symmetric(vertical: 2),
@@ -798,45 +680,14 @@ class _ProductoresPageState extends State<ProductoresPage>
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      Row(
-                                        children: [
-                                          Icon(
-                                            Icons.email,
-                                            size: 16,
-                                            color: Colors.green[600],
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            productor.email ?? '',
-                                            style: GoogleFonts.montserrat(
-                                              color: Colors.green[800],
-                                              fontSize: 13,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      Row(
-                                        children: [
-                                          Icon(
-                                            Icons.badge,
-                                            size: 16,
-                                            color: Colors.green[600],
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            productor.cui ?? '',
-                                            style: GoogleFonts.montserrat(
-                                              color: Colors.green[800],
-                                              fontSize: 13,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      if ((productor.status) == 'pending')
+                                      if (productor.email?.isNotEmpty ?? false)
+                                        Text(productor.email!),
+                                      if (productor.cui?.isNotEmpty ?? false)
+                                        Text('CUI: ${productor.cui!}'),
+                                      if (productor.status == 'pending')
                                         Row(
                                           children: [
-                                            const SizedBox(width: 4),
-                                            Icon(
+                                            const Icon(
                                               Icons.sync,
                                               size: 14,
                                               color: Colors.orange,
@@ -868,8 +719,7 @@ class _ProductoresPageState extends State<ProductoresPage>
                                           context,
                                           MaterialPageRoute(
                                             builder: (_) => ParcelasPage(
-                                              productorId:
-                                                  productor.serverId ?? 0,
+                                              productorUuid: productor.uuid,
                                               nombreProductor: productor.nombre,
                                             ),
                                           ),
@@ -898,15 +748,15 @@ class _ProductoresPageState extends State<ProductoresPage>
                                       PopupMenuItem(
                                         value: 'delete',
                                         child: Row(
-                                          children: [
+                                          children: const [
                                             Icon(
                                               Icons.delete,
                                               color: Colors.red,
                                             ),
-                                            const SizedBox(width: 8),
+                                            SizedBox(width: 8),
                                             Text(
                                               'Eliminar',
-                                              style: GoogleFonts.montserrat(
+                                              style: TextStyle(
                                                 color: Colors.red,
                                               ),
                                             ),
@@ -937,18 +787,6 @@ class _ProductoresPageState extends State<ProductoresPage>
                               ),
                             );
                           }),
-                          if (filteredProductores.isEmpty && !loading)
-                            Padding(
-                              padding: const EdgeInsets.all(20),
-                              child: Text(
-                                'No se encontraron productores.',
-                                style: GoogleFonts.montserrat(
-                                  color: Colors.grey,
-                                  fontSize: 16,
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
-                            ),
                         ],
                       );
                     },

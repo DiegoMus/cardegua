@@ -1,10 +1,12 @@
 import 'dart:async';
 
+import 'package:cardegua/sync_service.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:hive/hive.dart';
+import 'package:uuid/uuid.dart';
 
 import 'visita_parcela.dart';
 
@@ -13,16 +15,14 @@ int? _toNullableInt(dynamic v) {
   if (v == null) return null;
   if (v is int) return v;
   if (v is num) return v.toInt();
-  final s = v.toString();
-  return int.tryParse(s);
+  return int.tryParse(v.toString());
 }
 
 double? _toNullableDouble(dynamic v) {
   if (v == null) return null;
   if (v is double) return v;
   if (v is num) return v.toDouble();
-  final s = v.toString().replaceAll(',', '.');
-  return double.tryParse(s);
+  return double.tryParse(v.toString().replaceAll(',', '.'));
 }
 
 // --- Modelo Hive: Parcela ---
@@ -58,6 +58,10 @@ class Parcela extends HiveObject {
   String updatedAt;
   @HiveField(14)
   int? productorId;
+  @HiveField(15)
+  String uuid;
+  @HiveField(16)
+  String productorUuid;
 
   Parcela({
     this.serverId,
@@ -75,43 +79,51 @@ class Parcela extends HiveObject {
     this.status = 'pending',
     String? updatedAt,
     this.productorId,
-  }) : updatedAt = updatedAt ?? DateTime.now().toIso8601String();
+    String? uuid,
+    required this.productorUuid,
+  }) : uuid = uuid ?? const Uuid().v4(),
+       updatedAt = updatedAt ?? DateTime.now().toIso8601String();
 }
 
-// --- Adapter de Hive para Parcela ---
+// --- Adapter de Hive para Parcela (CORREGIDO) ---
+// --- Adapter de Hive para Parcela (CORREGIDO) ---
 class ParcelaAdapter extends TypeAdapter<Parcela> {
   @override
   final int typeId = 10;
 
   @override
   Parcela read(BinaryReader reader) {
-    final n = reader.readByte();
-    final m = <int, dynamic>{
-      for (var i = 0; i < n; i++) reader.readByte(): reader.read(),
+    final numOfFields = reader.readByte();
+    final fields = <int, dynamic>{
+      for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
     };
     return Parcela(
-      serverId: _toNullableInt(m[0]),
-      nombre: (m[1] ?? '').toString(),
-      area: _toNullableDouble(m[2]),
-      tipoCultivoNombre: m[3] as String?,
-      idTipoCultivo: _toNullableInt(m[4]),
-      latitud: _toNullableDouble(m[5]),
-      longitud: _toNullableDouble(m[6]),
-      altitud: _toNullableDouble(m[7]),
-      idMunicipio: _toNullableInt(m[8]),
-      vigente: m[9] as bool? ?? true,
-      fechaRegistroIso: m[10] as String?,
-      operation: m[11] as String?,
-      status: (m[12] as String?) ?? 'pending',
-      updatedAt: m[13] as String?,
-      productorId: _toNullableInt(m[14]),
+      serverId: fields[0] as int?,
+      nombre: fields[1] as String,
+      area: fields[2] as double?,
+      tipoCultivoNombre: fields[3] as String?,
+      idTipoCultivo: fields[4] as int?,
+      latitud: fields[5] as double?,
+      longitud: fields[6] as double?,
+      altitud: fields[7] as double?,
+      idMunicipio: fields[8] as int?,
+      vigente: fields[9] as bool? ?? true,
+      fechaRegistroIso: fields[10] as String?,
+      operation: fields[11] as String?,
+      status: fields[12] as String? ?? 'pending',
+      updatedAt: fields[13] as String?,
+      productorId: fields[14] as int?,
+      // Aunque el constructor lo arregla, es bueno leerlos.
+      uuid: fields[15] as String?,
+      productorUuid: fields[16] as String? ?? '',
     );
   }
 
   @override
   void write(BinaryWriter writer, Parcela obj) {
+    // CORRECCIÓN CLAVE: El número de campos debe ser 17.
     writer
-      ..writeByte(15)
+      ..writeByte(17)
       ..writeByte(0)
       ..write(obj.serverId)
       ..writeByte(1)
@@ -141,18 +153,23 @@ class ParcelaAdapter extends TypeAdapter<Parcela> {
       ..writeByte(13)
       ..write(obj.updatedAt)
       ..writeByte(14)
-      ..write(obj.productorId);
+      ..write(obj.productorId)
+      // CORRECCIÓN: Añadir los campos que faltaban.
+      ..writeByte(15)
+      ..write(obj.uuid)
+      ..writeByte(16)
+      ..write(obj.productorUuid);
   }
 }
 
 // --- Página de Parcelas ---
 class ParcelasPage extends StatefulWidget {
-  final int productorId;
+  final String productorUuid;
   final String nombreProductor;
 
   const ParcelasPage({
     super.key,
-    required this.productorId,
+    required this.productorUuid,
     required this.nombreProductor,
   });
 
@@ -186,9 +203,6 @@ class _ParcelasPageState extends State<ParcelasPage>
   Parcela? editingParcela;
   bool showForm = false;
 
-  final Set<int> _recentlyVisitedIds = {};
-  final Duration _highlightDuration = const Duration(seconds: 4);
-
   late Box<Parcela> _parcelaBox;
   late Box _tipoCultivoBox;
   late Box _municipiosBox;
@@ -207,15 +221,15 @@ class _ParcelasPageState extends State<ParcelasPage>
       loadLocalParcelas();
     });
 
-    if (widget.productorId == 0) {
+    if (widget.productorUuid.isEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text(
-                'Este productor no está sincronizado. No se pueden añadir parcelas.',
+                'Error: ID de productor inválido. No se pueden gestionar parcelas.',
               ),
-              backgroundColor: Colors.orange,
+              backgroundColor: Colors.red,
             ),
           );
         }
@@ -288,9 +302,12 @@ class _ParcelasPageState extends State<ParcelasPage>
   }
 
   Future<void> loadLocalParcelas() async {
+    // Esta es la lógica de filtrado correcta
     parcelas = _parcelaBox.values
         .where(
-          (p) => p.operation != 'delete' && p.productorId == widget.productorId,
+          (p) =>
+              p.productorUuid == widget.productorUuid &&
+              p.operation != 'delete',
         )
         .toList();
 
@@ -314,7 +331,7 @@ class _ParcelasPageState extends State<ParcelasPage>
     setState(() => loading = true);
 
     if (_isOnline) {
-      await syncPending();
+      await SyncService.syncAllPendingData();
       await _syncCatalogsFromServer();
       await fetchParcelas();
     } else {
@@ -359,108 +376,49 @@ class _ParcelasPageState extends State<ParcelasPage>
     }
   }
 
-  Future<void> syncPending() async {
-    if (!_isOnline) return;
-    final supabase = Supabase.instance.client;
-    final pending = _parcelaBox.values
-        .where((p) => p.status == 'pending')
-        .toList();
-
-    for (final p in pending) {
-      try {
-        if (p.operation == 'create') {
-          final res = await supabase
-              .from('parcelas')
-              .insert({
-                'nombre': p.nombre,
-                'area': p.area,
-                'id_tipo_cultivo': p.idTipoCultivo,
-                'latitud': p.latitud,
-                'longitud': p.longitud,
-                'altitud': p.altitud,
-                'id_municipio': p.idMunicipio,
-                'id_productor': p.productorId,
-                'fecha_registro': p.fechaRegistroIso,
-                'vigente': p.vigente,
-              })
-              .select()
-              .single();
-          p.serverId = res['id_parcela'];
-          p.operation = null;
-          p.status = 'synced';
-          await p.save();
-        } else if (p.operation == 'update' && p.serverId != null) {
-          await supabase
-              .from('parcelas')
-              .update({
-                'nombre': p.nombre,
-                'area': p.area,
-                'id_tipo_cultivo': p.idTipoCultivo,
-                'latitud': p.latitud,
-                'longitud': p.longitud,
-                'altitud': p.altitud,
-                'id_municipio': p.idMunicipio,
-                'vigente': p.vigente,
-              })
-              .eq('id_parcela', p.serverId!);
-          p.operation = null;
-          p.status = 'synced';
-          await p.save();
-        } else if (p.operation == 'delete') {
-          if (p.serverId != null) {
-            await supabase
-                .from('parcelas')
-                .delete()
-                .eq('id_parcela', p.serverId!);
-          }
-          await p.delete();
-        }
-      } catch (e) {
-        debugPrint('Error sincronizando parcela ${p.key}: $e');
-      }
-    }
-    await loadLocalParcelas();
-  }
-
   Future<void> fetchParcelas() async {
     if (!_isOnline) {
       await loadLocalParcelas();
       return;
     }
     try {
+      // CORRECCIÓN: Filtrar por `productor_uuid` en lugar de `id_productor`
       final result = await Supabase.instance.client
           .from('parcelas')
           .select('*, tipo_cultivo(cultivo)')
-          .eq('id_productor', widget.productorId);
+          .eq('productor_uuid', widget.productorUuid);
 
       for (final r in result) {
         final serverId = _toNullableInt(r['id_parcela']);
-        if (serverId == null) continue;
+        final uuid = r['uuid'] as String?;
+        if (serverId == null || uuid == null) continue;
 
-        final local = _parcelaBox.values.firstWhere(
-          (p) => p.serverId == serverId,
-          orElse: () => Parcela(nombre: '', productorId: widget.productorId),
-        );
+        Parcela? local;
+        try {
+          local = _parcelaBox.values.firstWhere((p) => p.uuid == uuid);
+        } catch (_) {
+          local = null;
+        }
 
-        if (local.key == null || local.operation == null) {
+        if (local == null || local.operation == null) {
           final newP = Parcela(
             serverId: serverId,
+            uuid: uuid,
+            productorUuid: r['productor_uuid'] ?? widget.productorUuid,
             nombre: r['nombre'] ?? '',
             area: _toNullableDouble(r['area']),
+            latitud: _toNullableDouble(r['latitud']),
+            longitud: _toNullableDouble(r['longitud']),
+            altitud: _toNullableDouble(r['altitud']),
             tipoCultivoNombre: r['tipo_cultivo'] != null
                 ? r['tipo_cultivo']['cultivo']
                 : null,
             idTipoCultivo: _toNullableInt(r['id_tipo_cultivo']),
-            latitud: _toNullableDouble(r['latitud']),
-            longitud: _toNullableDouble(r['longitud']),
-            altitud: _toNullableDouble(r['altitud']),
             idMunicipio: _toNullableInt(r['id_municipio']),
-            vigente: r['vigente'] ?? true,
-            fechaRegistroIso: r['fecha_registro'],
             productorId: _toNullableInt(r['id_productor']),
             status: 'synced',
           );
-          if (local.key != null) {
+          if (local != null) {
             await _parcelaBox.put(local.key, newP);
           } else {
             await _parcelaBox.add(newP);
@@ -498,7 +456,7 @@ class _ParcelasPageState extends State<ParcelasPage>
 
     final p = isEditing
         ? editingParcela!
-        : Parcela(productorId: widget.productorId, nombre: '');
+        : Parcela(productorUuid: widget.productorUuid, nombre: '');
 
     p.nombre = _nombreController.text;
     p.area = _toNullableDouble(_areaController.text);
@@ -522,7 +480,7 @@ class _ParcelasPageState extends State<ParcelasPage>
 
     await loadLocalParcelas();
     clearFormFields();
-    if (_isOnline) await syncPending();
+    if (_isOnline) await SyncService.syncAllPendingData();
   }
 
   Future<void> deleteParcelaLocal(Parcela p) async {
@@ -534,7 +492,7 @@ class _ParcelasPageState extends State<ParcelasPage>
       await p.save();
     }
     await loadLocalParcelas();
-    if (_isOnline) await syncPending();
+    if (_isOnline) await SyncService.syncAllPendingData();
   }
 
   void startEditParcelaObj(Parcela p) {
@@ -663,7 +621,7 @@ class _ParcelasPageState extends State<ParcelasPage>
           ),
         ],
       ),
-      floatingActionButton: (showForm || widget.productorId == 0)
+      floatingActionButton: (showForm || widget.productorUuid == '')
           ? null
           : FloatingActionButton(
               backgroundColor: natureGreen,
