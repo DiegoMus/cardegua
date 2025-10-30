@@ -1,251 +1,286 @@
+import 'dart:async';
+import 'dart:convert';
+import 'package:cardegua/sync_service.dart';
+import 'package:cardegua/visita_parcela.dart';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:hive/hive.dart';
+import 'package:intl/intl.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class HistorialVisitasParcela extends StatefulWidget {
-  final String parcelaId;
-
-  const HistorialVisitasParcela({super.key, required this.parcelaId});
-
+  final String parcelaUuid;
+  const HistorialVisitasParcela({super.key, required this.parcelaUuid});
   @override
   State<HistorialVisitasParcela> createState() =>
       _HistorialVisitasParcelaState();
 }
 
 class _HistorialVisitasParcelaState extends State<HistorialVisitasParcela> {
-  List<dynamic> visitas = [];
-  bool loading = false;
-
-  final DateFormat _dateFormat = DateFormat('dd/MM/yyyy HH:mm');
-  final _refreshKey = GlobalKey<RefreshIndicatorState>();
+  List<VisitaMonitoreo> _visitas = [];
+  bool _isLoading = true;
+  bool _isOnline = false;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
 
   @override
   void initState() {
     super.initState();
-    _fetchVisitas();
+    _initAndLoadData();
   }
 
-  Future<void> _fetchVisitas() async {
-    setState(() => loading = true);
-    final supabase = Supabase.instance.client;
+  @override
+  void dispose() {
+    _connectivitySub?.cancel();
+    super.dispose();
+  }
 
+  Future<void> _initAndLoadData() async {
+    final conn = Connectivity();
+    final initialResult = await conn.checkConnectivity();
+    if (mounted)
+      setState(
+        () => _isOnline =
+            initialResult.contains(ConnectivityResult.mobile) ||
+            initialResult.contains(ConnectivityResult.wifi),
+      );
+
+    _connectivitySub = conn.onConnectivityChanged.listen((result) {
+      if (mounted)
+        setState(
+          () => _isOnline =
+              result.contains(ConnectivityResult.mobile) ||
+              result.contains(ConnectivityResult.wifi),
+        );
+    });
+
+    // LÓGICA DE INICIO MEJORADA
+    if (_isOnline) {
+      await _manualRefresh(); // Si hay internet, refresca al entrar
+    } else {
+      await _loadLocalVisitas(); // Si no, solo carga lo local
+    }
+
+    if (mounted) setState(() => _isLoading = false);
+  }
+
+  // --- NUEVA FUNCIÓN PARA DESCARGAR VISITAS DEL SERVIDOR ---
+  Future<void> _fetchRemoteVisitas() async {
+    if (!_isOnline) return;
+    debugPrint('[Historial] Descargando visitas remotas...');
     try {
-      // Intenta convertir parcelaId a int si corresponde
-      dynamic parcelaIdToQuery = widget.parcelaId;
-      final parsed = int.tryParse(widget.parcelaId);
-      if (parsed != null) parcelaIdToQuery = parsed;
+      final box = await Hive.openBox<VisitaMonitoreo>('visitas_monitoreo');
 
-      // Consulta las visitas de la parcela ordenadas por fecha de visita (desc)
-      final res = await supabase
+      final response = await Supabase.instance.client
           .from('visitas_monitoreo')
           .select()
-          .eq('id_parcela', parcelaIdToQuery);
+          .eq('uuid_parcelas', widget.parcelaUuid);
 
-      // Cuando la API devuelve PostgREST, viene como List<dynamic>
-      setState(() {
-        visitas = res as List<dynamic>? ?? [];
-      });
-    } catch (e) {
-      // Si hay error, mostrar snackbar
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al cargar historial: $e')),
+      final remoteVisitas = List<Map<String, dynamic>>.from(response);
+      debugPrint(
+        '[Historial] Se encontraron ${remoteVisitas.length} visitas en el servidor.',
+      );
+
+      for (final remoteData in remoteVisitas) {
+        final uuid = remoteData['uuid'] as String?;
+        if (uuid == null) continue;
+
+        VisitaMonitoreo? localVisita;
+        try {
+          localVisita = box.values.firstWhere((v) => v.uuid == uuid);
+        } catch (_) {
+          localVisita = null;
+        }
+
+        final visita = VisitaMonitoreo(
+          serverId: remoteData['id_visita'],
+          uuid: uuid,
+          parcelaUuid: remoteData['uuid_parcelas'] ?? widget.parcelaUuid,
+          parcelaId: remoteData['id_parcela'],
+          fechaVisita: remoteData['fecha_visita'],
+          observaciones: remoteData['observaciones'],
+          recomendaciones: remoteData['recomendaciones'],
+          ep: remoteData['ep'],
+          ap: remoteData['ap'],
+          mp: remoteData['mp'],
+          bp: remoteData['bp'],
+          cp: remoteData['cp'],
+          monitoreoPlantasJson: jsonEncode(
+            remoteData['monitoreo_plantas'] ?? [],
+          ),
+          usuarioRegistroId: remoteData['usuario_registro_id'],
+          usuarioRegistroEmail: remoteData['usuario_registro_email'],
+          status: 'synced',
+          operation: null,
         );
+
+        if (localVisita != null) {
+          if (localVisita.status != 'pending') {
+            await box.put(localVisita.key, visita);
+          }
+        } else {
+          await box.add(visita);
+        }
       }
-    } finally {
-      if (mounted) {
-        setState(() {
-          loading = false;
-        });
-      }
+    } catch (e) {
+      debugPrint('Error en _fetchRemoteVisitas: $e');
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al descargar historial: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
     }
   }
 
-  // Extrae un posible id primario del registro de la visita.
-  // Busca claves que empiecen por "id" y que no sean "id_parcela".
-  String? _findPrimaryKeyName(Map<String, dynamic> visit) {
-    for (final k in visit.keys) {
-      final lower = k.toLowerCase();
-      if (lower == 'id_parcela') continue;
-      // heurística: preferir keys que comiencen con "id"
-      if (lower.startsWith('id')) return k;
-    }
-    // fallback: keys que contienen 'id' en cualquier parte (pero no id_parcela)
-    for (final k in visit.keys) {
-      final lower = k.toLowerCase();
-      if (lower.contains('id') && lower != 'id_parcela') return k;
-    }
-    return null;
-  }
-
-  Future<void> _deleteVisita(Map<String, dynamic> visit) async {
-    final supabase = Supabase.instance.client;
-
-    final pkName = _findPrimaryKeyName(visit);
+  Future<void> _loadLocalVisitas() async {
     try {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Confirmar eliminación'),
-          content: const Text('¿Deseas eliminar esta visita?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Cancelar'),
+      if (!Hive.isAdapterRegistered(VisitaMonitoreoAdapter().typeId)) {
+        Hive.registerAdapter(VisitaMonitoreoAdapter());
+      }
+    } catch (_) {}
+    final box = await Hive.openBox<VisitaMonitoreo>('visitas_monitoreo');
+    final allVisitas = box.values
+        .where(
+          (visita) =>
+              visita.parcelaUuid == widget.parcelaUuid &&
+              visita.operation != 'delete',
+        )
+        .toList();
+    allVisitas.sort(
+      (a, b) => DateTime.parse(
+        b.fechaVisita,
+      ).compareTo(DateTime.parse(a.fechaVisita)),
+    );
+    if (mounted) setState(() => _visitas = allVisitas);
+  }
+
+  // --- FUNCIÓN DE REFRESCO MEJORADA ---
+  Future<void> _manualRefresh() async {
+    setState(() => _isLoading = true);
+    if (_isOnline) {
+      await _fetchRemoteVisitas(); // 1. DESCARGA
+      await SyncService.syncAllPendingData(); // 2. ENVÍA
+    }
+    await _loadLocalVisitas(); // 3. MUESTRA DESDE LOCAL
+    if (mounted) {
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _isOnline ? 'Historial actualizado.' : 'Mostrando datos locales.',
+          ),
+        ),
+      );
+    }
+  }
+
+  Widget _buildConteoGeneral(VisitaMonitoreo visita) {
+    final conteos = {
+      'EP': visita.ep,
+      'AP': visita.ap,
+      'MP': visita.mp,
+      'BP': visita.bp,
+      'CP': visita.cp,
+    };
+    return Padding(
+      padding: const EdgeInsets.only(top: 8.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Conteo General:',
+            style: GoogleFonts.montserrat(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8.0,
+            runSpacing: 4.0,
+            children: conteos.entries.map((entry) {
+              return Chip(
+                label: Text(
+                  '${entry.key}: ${entry.value ?? 0}',
+                  style: GoogleFonts.montserrat(fontSize: 12),
+                ),
+                backgroundColor: Colors.grey.shade200,
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMonitoreoPlantas(VisitaMonitoreo visita) {
+    try {
+      final List<dynamic> monitoreoData = jsonDecode(
+        visita.monitoreoPlantasJson,
+      );
+      return Padding(
+        padding: const EdgeInsets.only(top: 16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Monitoreo de Plantas:',
+              style: GoogleFonts.montserrat(fontWeight: FontWeight.w600),
             ),
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text(
-                'Eliminar',
-                style: TextStyle(color: Colors.red),
+            const SizedBox(height: 8),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                columnSpacing: 18,
+                headingRowHeight: 40,
+                dataRowMinHeight: 35,
+                dataRowMaxHeight: 40,
+                columns: const [
+                  DataColumn(label: Text('Situación')),
+                  DataColumn(label: Text('EP')),
+                  DataColumn(label: Text('AP')),
+                  DataColumn(label: Text('MP')),
+                  DataColumn(label: Text('BP')),
+                  DataColumn(label: Text('CP')),
+                ],
+                rows: [
+                  _buildDataRow('Tallos', 'tallos_florales', monitoreoData),
+                  _buildDataRow('Ejes', 'eje_floral', monitoreoData),
+                  _buildDataRow('Flores', 'flores', monitoreoData),
+                  _buildDataRow(
+                    'Frutos s/Daño',
+                    'frutos_sin_dano',
+                    monitoreoData,
+                  ),
+                  _buildDataRow('c/Picudo', 'frutos_con_picudo', monitoreoData),
+                  _buildDataRow('c/Trips', 'frutos_con_trips', monitoreoData),
+                  _buildDataRow('c/Mosca', 'frutos_con_mosca', monitoreoData),
+                  _buildDataRow(
+                    's/Cosechar',
+                    'frutos_sin_cosechar',
+                    monitoreoData,
+                  ),
+                ],
               ),
             ),
           ],
         ),
       );
-
-      if (confirmed != true) return;
-
-      // Intenta borrar por la pk encontrada, si no existe usa match por id_parcela + fecha_visita
-      if (pkName != null && visit[pkName] != null) {
-        await supabase
-            .from('visita_parcela')
-            .delete()
-            .eq(pkName, visit[pkName]);
-      } else {
-        // fallback — intentar eliminar por id_parcela y fecha_registro_sistema o fecha_visita
-        dynamic parcelaIdToQuery = widget.parcelaId;
-        final parsed = int.tryParse(widget.parcelaId);
-        if (parsed != null) parcelaIdToQuery = parsed;
-
-        if (visit['fecha_registro_sistema'] != null) {
-          await supabase.from('visita_parcela').delete().match({
-            'id_parcela': parcelaIdToQuery,
-            'fecha_registro_sistema': visit['fecha_registro_sistema'],
-          });
-        } else if (visit['fecha_visita'] != null) {
-          await supabase.from('visita_parcela').delete().match({
-            'id_parcela': parcelaIdToQuery,
-            'fecha_visita': visit['fecha_visita'],
-          });
-        } else {
-          throw Exception(
-            'No se pudo determinar cómo eliminar el registro (falta clave primaria/fechas).',
-          );
-        }
-      }
-
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Visita eliminada')));
-        await _fetchVisitas();
-      }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al eliminar la visita: $e')),
-        );
-      }
+      return Text('Error al mostrar datos de monitoreo: $e');
     }
   }
 
-  Widget _buildMonitoreoTable(List<dynamic>? listaMonitoreo) {
-    if (listaMonitoreo == null || listaMonitoreo.isEmpty) {
-      return const Text('Sin datos de monitoreo.');
-    }
-
-    // Construir una tabla simple mostrando planta y sus conteos
-    return Column(
-      children: [
-        const SizedBox(height: 8),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: DataTable(
-            columns: const [
-              DataColumn(
-                label: Text(
-                  'Planta',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-              DataColumn(
-                label: Text(
-                  'Tallos',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-              DataColumn(
-                label: Text(
-                  'Eje',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-              DataColumn(
-                label: Text(
-                  'Flores',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-              DataColumn(
-                label: Text(
-                  'Sin daño',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-              DataColumn(
-                label: Text(
-                  'Picudo',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-              DataColumn(
-                label: Text(
-                  'Trips',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-              DataColumn(
-                label: Text(
-                  'Mosca',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-              DataColumn(
-                label: Text(
-                  'Sin cosechar',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-            ],
-            rows: listaMonitoreo.map((m) {
-              final planta = (m['planta'] ?? '').toString();
-              final tallos = (m['tallos_florales'] ?? '').toString();
-              final eje = (m['eje_floral'] ?? '').toString();
-              final flores = (m['flores'] ?? '').toString();
-              final sinDano = (m['frutos_sin_dano'] ?? '').toString();
-              final picudo = (m['frutos_con_picudo'] ?? '').toString();
-              final trips = (m['frutos_con_trips'] ?? '').toString();
-              final mosca = (m['frutos_con_mosca'] ?? '').toString();
-              final sinCosechar = (m['frutos_sin_cosechar'] ?? '').toString();
-
-              return DataRow(
-                cells: [
-                  DataCell(Text(planta)),
-                  DataCell(Text(tallos)),
-                  DataCell(Text(eje)),
-                  DataCell(Text(flores)),
-                  DataCell(Text(sinDano)),
-                  DataCell(Text(picudo)),
-                  DataCell(Text(trips)),
-                  DataCell(Text(mosca)),
-                  DataCell(Text(sinCosechar)),
-                ],
-              );
-            }).toList(),
+  DataRow _buildDataRow(String label, String key, List<dynamic> data) {
+    return DataRow(
+      cells: [
+        DataCell(Text(label, style: GoogleFonts.montserrat(fontSize: 12))),
+        for (int i = 0; i < 5; i++)
+          DataCell(
+            Center(
+              child: Text((data.length > i ? data[i][key] ?? 0 : 0).toString()),
+            ),
           ),
-        ),
       ],
     );
   }
@@ -261,211 +296,148 @@ class _HistorialVisitasParcelaState extends State<HistorialVisitasParcela> {
         backgroundColor: natureGreen,
         title: Text(
           'Historial de Visitas',
-          style: GoogleFonts.montserrat(fontWeight: FontWeight.bold),
+          style: GoogleFonts.montserrat(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ),
         ),
         elevation: 0,
       ),
-      body: loading
+      body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
-              key: _refreshKey,
-              onRefresh: _fetchVisitas,
-              child: visitas.isEmpty
-                  ? ListView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      children: [
-                        const SizedBox(height: 120),
-                        Center(
-                          child: Text(
-                            'No hay visitas registradas para esta parcela.',
-                            style: GoogleFonts.montserrat(color: Colors.grey),
-                          ),
+              onRefresh: _manualRefresh,
+              child: _visitas.isEmpty
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20.0),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.history_toggle_off,
+                              size: 80,
+                              color: Colors.grey.shade400,
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              'No hay visitas registradas para esta parcela.',
+                              textAlign: TextAlign.center,
+                              style: GoogleFonts.montserrat(
+                                fontSize: 16,
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
                     )
                   : ListView.builder(
                       padding: const EdgeInsets.all(12),
-                      itemCount: visitas.length,
+                      itemCount: _visitas.length,
                       itemBuilder: (context, index) {
-                        final visit = visitas[index] as Map<String, dynamic>;
-                        // Fecha: puede venir en iso string o como timestamptz
-                        String fechaTexto = '';
-                        if (visit['fecha_visita'] != null) {
-                          try {
-                            final raw = visit['fecha_visita'];
-                            DateTime dt;
-                            if (raw is String) {
-                              dt = DateTime.parse(raw).toLocal();
-                            } else if (raw is DateTime) {
-                              dt = raw.toLocal();
-                            } else {
-                              // a veces viene como Map {'_seconds':...} en otros clientes; intentar parse
-                              dt =
-                                  DateTime.tryParse(raw.toString()) ??
-                                  DateTime.now();
-                            }
-                            fechaTexto = _dateFormat.format(dt);
-                          } catch (_) {
-                            fechaTexto = visit['fecha_visita'].toString();
-                          }
-                        }
-
-                        final usuario =
-                            (visit['usuario_registro_email'] ??
-                                    visit['usuario_registro_id'] ??
-                                    'Desconocido')
-                                .toString();
-
-                        final ep = visit['ep']?.toString() ?? '0';
-                        final ap = visit['ap']?.toString() ?? '0';
-                        final mp = visit['mp']?.toString() ?? '0';
-                        final bp = visit['bp']?.toString() ?? '0';
-                        final cp = visit['cp']?.toString() ?? '0';
-
-                        final monitoreo =
-                            visit['monitoreo_plantas'] as List<dynamic>?;
+                        final visita = _visitas[index];
+                        final fecha = DateTime.tryParse(visita.fechaVisita);
+                        final formattedDate = fecha != null
+                            ? DateFormat('dd/MM/yyyy').format(fecha)
+                            : 'Fecha inválida';
 
                         return Card(
                           margin: const EdgeInsets.symmetric(vertical: 6),
+                          elevation: 2,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          clipBehavior: Clip.antiAlias,
                           child: ExpansionTile(
+                            backgroundColor: Colors.white,
+                            collapsedBackgroundColor: Colors.white,
                             leading: CircleAvatar(
-                              backgroundColor: natureGreen.withOpacity(0.15),
+                              backgroundColor: natureGreen.withOpacity(0.1),
                               child: Icon(
                                 Icons.calendar_today,
                                 color: natureGreen,
+                                size: 20,
                               ),
                             ),
                             title: Text(
-                              fechaTexto.isEmpty
-                                  ? 'Fecha desconocida'
-                                  : fechaTexto,
+                              'Visita del $formattedDate',
                               style: GoogleFonts.montserrat(
-                                color: natureGreen,
                                 fontWeight: FontWeight.bold,
+                                color: natureGreen,
+                                fontSize: 16,
                               ),
                             ),
-                            subtitle: Text(
-                              usuario,
-                              style: GoogleFonts.montserrat(fontSize: 12),
-                            ),
-                            childrenPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 8,
-                            ),
-                            trailing: PopupMenuButton<String>(
-                              icon: Icon(Icons.more_vert, color: natureGreen),
-                              onSelected: (value) {
-                                if (value == 'delete') {
-                                  _deleteVisita(visit);
-                                }
-                              },
-                              itemBuilder: (ctx) => [
-                                PopupMenuItem(
-                                  value: 'delete',
-                                  child: Row(
-                                    children: const [
-                                      Icon(Icons.delete, color: Colors.red),
-                                      SizedBox(width: 8),
+                            subtitle: visita.status == 'pending'
+                                ? Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.sync_problem,
+                                        color: Colors.orange,
+                                        size: 16,
+                                      ),
+                                      const SizedBox(width: 4),
                                       Text(
-                                        'Eliminar',
-                                        style: TextStyle(color: Colors.red),
+                                        'Pendiente de sincronizar',
+                                        style: GoogleFonts.montserrat(
+                                          color: Colors.orange,
+                                          fontSize: 12,
+                                        ),
                                       ),
                                     ],
-                                  ),
-                                ),
-                              ],
-                            ),
+                                  )
+                                : null,
                             children: [
-                              // Conteo general (EP/AP/...)
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  _smallStat('EP', ep),
-                                  _smallStat('AP', ap),
-                                  _smallStat('MP', mp),
-                                  _smallStat('BP', bp),
-                                  _smallStat('CP', cp),
-                                ],
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16.0,
+                                ).copyWith(bottom: 16.0),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Divider(height: 1),
+                                    const SizedBox(height: 12),
+                                    Text(
+                                      'Observaciones:',
+                                      style: GoogleFonts.montserrat(
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      visita.observaciones ??
+                                          'Sin observaciones.',
+                                      style: GoogleFonts.montserrat(
+                                        color: Colors.black87,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 12),
+                                    Text(
+                                      'Recomendaciones:',
+                                      style: GoogleFonts.montserrat(
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      visita.recomendaciones ??
+                                          'Sin recomendaciones.',
+                                      style: GoogleFonts.montserrat(
+                                        color: Colors.black87,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    _buildConteoGeneral(visita),
+                                    _buildMonitoreoPlantas(visita),
+                                  ],
+                                ),
                               ),
-                              const SizedBox(height: 12),
-                              // Observaciones / Recomendaciones
-                              if ((visit['observaciones'] ?? '')
-                                  .toString()
-                                  .isNotEmpty)
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Observaciones',
-                                      style: GoogleFonts.montserrat(
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Text(
-                                      visit['observaciones'].toString(),
-                                      style: GoogleFonts.montserrat(),
-                                    ),
-                                    const SizedBox(height: 12),
-                                  ],
-                                ),
-                              if ((visit['recomendaciones'] ?? '')
-                                  .toString()
-                                  .isNotEmpty)
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Recomendaciones',
-                                      style: GoogleFonts.montserrat(
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Text(
-                                      visit['recomendaciones'].toString(),
-                                      style: GoogleFonts.montserrat(),
-                                    ),
-                                    const SizedBox(height: 12),
-                                  ],
-                                ),
-                              // Tabla de monitoreo (si existe)
-                              _buildMonitoreoTable(monitoreo),
-                              const SizedBox(height: 8),
                             ],
                           ),
                         );
                       },
                     ),
             ),
-    );
-  }
-
-  Widget _smallStat(String label, String value) {
-    return Column(
-      children: [
-        Text(
-          label,
-          style: GoogleFonts.montserrat(
-            fontWeight: FontWeight.bold,
-            fontSize: 12,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.grey.shade200),
-          ),
-          child: Text(
-            value,
-            style: GoogleFonts.montserrat(fontWeight: FontWeight.bold),
-          ),
-        ),
-      ],
     );
   }
 }

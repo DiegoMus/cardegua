@@ -83,6 +83,25 @@ class Parcela extends HiveObject {
     required this.productorUuid,
   }) : uuid = uuid ?? const Uuid().v4(),
        updatedAt = updatedAt ?? DateTime.now().toIso8601String();
+
+  Map<String, dynamic> toMap() {
+    return {
+      // No incluimos 'id_parcela' (serverId) porque Supabase lo genera.
+      'uuid': uuid,
+      'id_productor': productorId,
+      'productor_uuid': productorUuid,
+      'nombre': nombre,
+      'area': area,
+      'id_tipo_cultivo': idTipoCultivo,
+      'latitud': latitud,
+      'longitud': longitud,
+      'altitud': altitud,
+      'id_municipio': idMunicipio,
+      'vigente': vigente,
+      // Asegúrate de que tu columna en Supabase se llame 'fecha_registro'
+      'fecha_registro': fechaRegistroIso,
+    };
+  }
 }
 
 // --- Adapter de Hive para Parcela (CORREGIDO) ---
@@ -750,9 +769,7 @@ class _ParcelasPageState extends State<ParcelasPage>
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => FormularioVisita(
-                            parcelaId: p.serverId.toString(),
-                          ),
+                          builder: (_) => FormularioVisita(parcelaUuid: p.uuid),
                         ),
                       );
                     }

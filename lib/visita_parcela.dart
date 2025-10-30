@@ -1,14 +1,158 @@
+import 'dart:async';
+import 'dart:convert';
+import 'package:cardegua/sync_service.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:hive/hive.dart';
+import 'package:uuid/uuid.dart';
 import 'historial_visitas_parcela.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+
+@HiveType(typeId: 20) // ¡Asegúrate de que este typeId no esté en uso!
+class VisitaMonitoreo extends HiveObject {
+  @HiveField(0)
+  int? serverId;
+  @HiveField(1)
+  String uuid;
+  @HiveField(2)
+  String parcelaUuid;
+  @HiveField(3)
+  int? parcelaId;
+  @HiveField(4)
+  String fechaVisita;
+  @HiveField(5)
+  String? observaciones;
+  @HiveField(6)
+  String? recomendaciones;
+  @HiveField(7)
+  int? ep;
+  @HiveField(8)
+  int? ap;
+  @HiveField(9)
+  int? mp;
+  @HiveField(10)
+  int? bp;
+  @HiveField(11)
+  int? cp;
+  @HiveField(12)
+  String monitoreoPlantasJson; // Guardamos el JSON como String
+  @HiveField(13)
+  String? usuarioRegistroEmail;
+  @HiveField(14)
+  String? usuarioRegistroId;
+  @HiveField(15)
+  String status;
+  @HiveField(16)
+  String? operation;
+  @HiveField(17)
+  String updatedAt;
+
+  VisitaMonitoreo({
+    this.serverId,
+    String? uuid,
+    required this.parcelaUuid,
+    this.parcelaId,
+    required this.fechaVisita,
+    this.observaciones,
+    this.recomendaciones,
+    this.ep,
+    this.ap,
+    this.mp,
+    this.bp,
+    this.cp,
+    required this.monitoreoPlantasJson,
+    this.usuarioRegistroEmail,
+    this.usuarioRegistroId,
+    this.status = 'pending',
+    this.operation,
+    String? updatedAt,
+  }) : this.uuid = uuid ?? const Uuid().v4(),
+       this.updatedAt = updatedAt ?? DateTime.now().toIso8601String();
+}
+
+class VisitaMonitoreoAdapter extends TypeAdapter<VisitaMonitoreo> {
+  @override
+  final int typeId = 20;
+
+  @override
+  VisitaMonitoreo read(BinaryReader reader) {
+    final numOfFields = reader.readByte();
+    final fields = <int, dynamic>{
+      for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
+    };
+    return VisitaMonitoreo(
+      serverId: fields[0] as int?,
+      uuid: fields[1] as String,
+      parcelaUuid: fields[2] as String,
+      parcelaId: fields[3] as int?,
+      fechaVisita: fields[4] as String,
+      observaciones: fields[5] as String?,
+      recomendaciones: fields[6] as String?,
+      ep: fields[7] as int?,
+      ap: fields[8] as int?,
+      mp: fields[9] as int?,
+      bp: fields[10] as int?,
+      cp: fields[11] as int?,
+      monitoreoPlantasJson: fields[12] as String,
+      usuarioRegistroEmail: fields[13] as String?,
+      usuarioRegistroId: fields[14] as String?,
+      status: fields[15] as String? ?? 'pending',
+      operation: fields[16] as String?,
+      updatedAt: fields[17] as String?,
+    );
+  }
+
+  @override
+  void write(BinaryWriter writer, VisitaMonitoreo obj) {
+    writer
+      ..writeByte(18)
+      ..writeByte(0)
+      ..write(obj.serverId)
+      ..writeByte(1)
+      ..write(obj.uuid)
+      ..writeByte(2)
+      ..write(obj.parcelaUuid)
+      ..writeByte(3)
+      ..write(obj.parcelaId)
+      ..writeByte(4)
+      ..write(obj.fechaVisita)
+      ..writeByte(5)
+      ..write(obj.observaciones)
+      ..writeByte(6)
+      ..write(obj.recomendaciones)
+      ..writeByte(7)
+      ..write(obj.ep)
+      ..writeByte(8)
+      ..write(obj.ap)
+      ..writeByte(9)
+      ..write(obj.mp)
+      ..writeByte(10)
+      ..write(obj.bp)
+      ..writeByte(11)
+      ..write(obj.cp)
+      ..writeByte(12)
+      ..write(obj.monitoreoPlantasJson)
+      ..writeByte(13)
+      ..write(obj.usuarioRegistroEmail)
+      ..writeByte(14)
+      ..write(obj.usuarioRegistroId)
+      ..writeByte(15)
+      ..write(obj.status)
+      ..writeByte(16)
+      ..write(obj.operation)
+      ..writeByte(17)
+      ..write(obj.updatedAt);
+  }
+}
 
 class FormularioVisita extends StatefulWidget {
   // Recibe el ID de la parcela a la que pertenece esta visita.
-  final String parcelaId;
+  //final String parcelaId;
+  final String parcelaUuid;
 
-  const FormularioVisita({super.key, required this.parcelaId});
+  const FormularioVisita({super.key, required this.parcelaUuid});
 
   @override
   State<FormularioVisita> createState() => _FormularioVisitaState();
@@ -62,12 +206,41 @@ class _FormularioVisitaState extends State<FormularioVisita> {
   // Estado para manejar la fecha seleccionada.
   DateTime? _selectedDate;
   bool _isLoading = false;
+  bool _isOnline = false;
+
+  late StreamSubscription<List<ConnectivityResult>> _connectivitySub;
 
   final DateFormat _displayFormat = DateFormat('dd/MM/yyyy');
 
   @override
+  void initState() {
+    super.initState();
+    // Inicializar el estado de conectividad
+    _checkConnectivity();
+  }
+
+  Future<void> _checkConnectivity() async {
+    final conn = Connectivity();
+    final initialResult = await conn.checkConnectivity();
+    _isOnline =
+        initialResult.contains(ConnectivityResult.mobile) ||
+        initialResult.contains(ConnectivityResult.wifi);
+    setState(() {});
+    _connectivitySub = conn.onConnectivityChanged.listen((result) {
+      final newStatus =
+          result.contains(ConnectivityResult.mobile) ||
+          result.contains(ConnectivityResult.wifi);
+      if (_isOnline != newStatus) {
+        setState(() {
+          _isOnline = newStatus;
+        });
+      }
+    });
+  }
+
+  @override
   void dispose() {
-    // Limpia todos los controladores
+    _connectivitySub.cancel();
     _observacionesController.dispose();
     _recomendacionesController.dispose();
     _EPCController.dispose();
@@ -123,22 +296,8 @@ class _FormularioVisitaState extends State<FormularioVisita> {
   /// Guarda la visita en Supabase — sin usar operadores '!' inseguros
   /// y con manejo seguro de userMetadata.
   Future<void> _guardarVisita() async {
-    // Evitar usar currentState! — comprobar nulo de forma segura.
     final formState = _formKey.currentState;
-    if (formState == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Formulario no disponible. Intenta de nuevo.'),
-          ),
-        );
-      }
-      return;
-    }
-
-    final valid = formState.validate();
-    if (!valid) return;
-
+    if (formState == null || !formState.validate()) return;
     if (_selectedDate == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Por favor, selecciona una fecha')),
@@ -146,53 +305,29 @@ class _FormularioVisitaState extends State<FormularioVisita> {
       return;
     }
 
-    // Obtener usuario actual de Supabase
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Error: usuario no identificado.')),
-        );
-      }
-      return;
+    if (_isOnline) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => const AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 12),
+              Text('Guardando visita...'),
+            ],
+          ),
+        ),
+      );
     }
 
-    setState(() {
-      _isLoading = true;
-    });
-
     try {
-      // Obtener email con fallback seguro
-      final String userId = user.id ?? '';
-      String userEmail = user.email ?? '';
+      final user = Supabase.instance.client.auth.currentUser;
 
-      final meta = user.userMetadata;
-      if ((userEmail == null || userEmail.isEmpty) && meta != null) {
-        // Si meta es un Map<String, dynamic>, usarlo de forma segura
-        if (meta is Map<String, dynamic>) {
-          // Intentar varias claves comunes para email
-          final dynamic candidate =
-              meta['email'] ??
-              meta['email_address'] ??
-              meta['emailAddress'] ??
-              meta['user_email'];
-          if (candidate != null) userEmail = candidate.toString();
-        } else {
-          // meta no es Map, intentar acceso null-aware por seguridad (último recurso)
-          try {
-            final dynamic candidate = (meta as dynamic)?['email'];
-            if (candidate != null) userEmail = candidate.toString();
-          } catch (_) {
-            // ignorar
-          }
-        }
-      }
-      userEmail = userEmail ?? '';
-
-      // Preparar monitoreo_plantas
-      List<Map<String, int>> monitoreoPlantas = [];
-      for (var i = 0; i < 5; i++) {
-        monitoreoPlantas.add({
+      List<Map<String, int>> monitoreoPlantas = List.generate(
+        5,
+        (i) => {
           'planta': i + 1,
           'tallos_florales': int.tryParse(_tallosControllers[i].text) ?? 0,
           'eje_floral': int.tryParse(_ejesControllers[i].text) ?? 0,
@@ -207,56 +342,63 @@ class _FormularioVisitaState extends State<FormularioVisita> {
               int.tryParse(_frutosConMoscaControllers[i].text) ?? 0,
           'frutos_sin_cosechar':
               int.tryParse(_frutosSinCosecharControllers[i].text) ?? 0,
-        });
+        },
+      );
+      final monitoreoJson = jsonEncode(monitoreoPlantas);
+
+      // 1. Crear el objeto VisitaMonitoreo para Hive
+      final nuevaVisita = VisitaMonitoreo(
+        parcelaUuid: widget.parcelaUuid,
+        fechaVisita: _selectedDate!.toIso8601String(),
+        observaciones: _observacionesController.text,
+        recomendaciones: _recomendacionesController.text,
+        ep: int.tryParse(_EPCController.text),
+        ap: int.tryParse(_APCController.text),
+        mp: int.tryParse(_MPCController.text),
+        bp: int.tryParse(_BPCController.text),
+        cp: int.tryParse(_CPCController.text),
+        monitoreoPlantasJson: monitoreoJson,
+        usuarioRegistroId: user?.id,
+        usuarioRegistroEmail: user?.email,
+        status: 'pending',
+        operation: 'create',
+      );
+
+      // 2. Registrar el adapter y guardar en la caja de Hive
+      try {
+        if (!Hive.isAdapterRegistered(VisitaMonitoreoAdapter().typeId)) {
+          Hive.registerAdapter(VisitaMonitoreoAdapter());
+        }
+      } catch (_) {}
+      final box = await Hive.openBox<VisitaMonitoreo>('visitas_monitoreo');
+      await box.add(nuevaVisita);
+
+      // 3. Si estamos online, intentar sincronizar inmediatamente
+      if (_isOnline) {
+        await SyncService.syncAllPendingData();
       }
-
-      final supabase = Supabase.instance.client;
-
-      // Convertir parcelaId si es posible a int
-      dynamic parcelaIdToSave = widget.parcelaId;
-      final parsed = int.tryParse(widget.parcelaId);
-      if (parsed != null) parcelaIdToSave = parsed;
-
-      final insertData = {
-        'id_parcela': parcelaIdToSave,
-        'fecha_visita': _selectedDate!.toIso8601String(),
-        'observaciones': _observacionesController.text,
-        'recomendaciones': _recomendacionesController.text,
-        'fecha_registro': DateTime.now().toIso8601String(),
-        'ep': int.tryParse(_EPCController.text) ?? 0,
-        'ap': int.tryParse(_APCController.text) ?? 0,
-        'mp': int.tryParse(_MPCController.text) ?? 0,
-        'bp': int.tryParse(_BPCController.text) ?? 0,
-        'cp': int.tryParse(_CPCController.text) ?? 0,
-        'monitoreo_plantas': monitoreoPlantas,
-        'usuario_registro_email': userEmail,
-        'usuario_registro_id': userId,
-      };
-
-      // Insertar en la tabla (await la petición). No usamos .execute().
-      await supabase.from('visitas_monitoreo').insert(insertData);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Visita registrada con éxito')),
+          SnackBar(content: Text('Visita registrada. Se sincronizará pronto.')),
         );
         Navigator.pop(
           context,
           true,
-        ); // devuelve true para que la pantalla anterior refresque
+        ); // Devuelve true para refrescar la pantalla anterior
       }
-    } catch (e, st) {
-      debugPrint('Error guardando visita: $e\n$st');
-      if (mounted) {
+    } catch (e) {
+      debugPrint('Error en _guardarVisita: $e');
+      if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al registrar la visita: $e')),
+          SnackBar(
+            content: Text('Error al guardar la visita: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
-      }
     } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
+      if (_isOnline && mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
       }
     }
   }
@@ -351,7 +493,7 @@ class _FormularioVisitaState extends State<FormularioVisita> {
                 context,
                 MaterialPageRoute(
                   builder: (_) =>
-                      HistorialVisitasParcela(parcelaId: widget.parcelaId),
+                      HistorialVisitasParcela(parcelaUuid: widget.parcelaUuid),
                 ),
               );
             },
