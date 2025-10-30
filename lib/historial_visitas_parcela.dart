@@ -54,27 +54,26 @@ class _HistorialVisitasParcelaState extends State<HistorialVisitasParcela> {
         );
     });
 
-    // LÓGICA DE INICIO MEJORADA
     if (_isOnline) {
-      await _manualRefresh(); // Si hay internet, refresca al entrar
+      await _manualRefresh();
     } else {
-      await _loadLocalVisitas(); // Si no, solo carga lo local
+      await _loadLocalVisitas();
     }
 
     if (mounted) setState(() => _isLoading = false);
   }
 
-  // --- NUEVA FUNCIÓN PARA DESCARGAR VISITAS DEL SERVIDOR ---
   Future<void> _fetchRemoteVisitas() async {
     if (!_isOnline) return;
     debugPrint('[Historial] Descargando visitas remotas...');
     try {
       final box = await Hive.openBox<VisitaMonitoreo>('visitas_monitoreo');
 
+      // --- CORRECCIÓN #1: Usar el nombre de columna estandarizado ---
       final response = await Supabase.instance.client
           .from('visitas_monitoreo')
           .select()
-          .eq('uuid_parcelas', widget.parcelaUuid);
+          .eq('uuid_parcelas', widget.parcelaUuid); // Usar 'uuid_parcelas'
 
       final remoteVisitas = List<Map<String, dynamic>>.from(response);
       debugPrint(
@@ -82,37 +81,16 @@ class _HistorialVisitasParcelaState extends State<HistorialVisitasParcela> {
       );
 
       for (final remoteData in remoteVisitas) {
-        final uuid = remoteData['uuid'] as String?;
-        if (uuid == null) continue;
+        // --- CORRECCIÓN #2: Usar el constructor .fromJson que ya es robusto ---
+        // Esto simplifica el código y asegura consistencia.
+        final visita = VisitaMonitoreo.fromJson(remoteData);
 
         VisitaMonitoreo? localVisita;
         try {
-          localVisita = box.values.firstWhere((v) => v.uuid == uuid);
+          localVisita = box.values.firstWhere((v) => v.uuid == visita.uuid);
         } catch (_) {
           localVisita = null;
         }
-
-        final visita = VisitaMonitoreo(
-          serverId: remoteData['id_visita'],
-          uuid: uuid,
-          parcelaUuid: remoteData['uuid_parcelas'] ?? widget.parcelaUuid,
-          parcelaId: remoteData['id_parcela'],
-          fechaVisita: remoteData['fecha_visita'],
-          observaciones: remoteData['observaciones'],
-          recomendaciones: remoteData['recomendaciones'],
-          ep: remoteData['ep'],
-          ap: remoteData['ap'],
-          mp: remoteData['mp'],
-          bp: remoteData['bp'],
-          cp: remoteData['cp'],
-          monitoreoPlantasJson: jsonEncode(
-            remoteData['monitoreo_plantas'] ?? [],
-          ),
-          usuarioRegistroId: remoteData['usuario_registro_id'],
-          usuarioRegistroEmail: remoteData['usuario_registro_email'],
-          status: 'synced',
-          operation: null,
-        );
 
         if (localVisita != null) {
           if (localVisita.status != 'pending') {
@@ -148,22 +126,25 @@ class _HistorialVisitasParcelaState extends State<HistorialVisitasParcela> {
               visita.operation != 'delete',
         )
         .toList();
-    allVisitas.sort(
-      (a, b) => DateTime.parse(
-        b.fechaVisita,
-      ).compareTo(DateTime.parse(a.fechaVisita)),
-    );
+
+    // Ordenamiento a prueba de fechas inválidas
+    allVisitas.sort((a, b) {
+      final dateA = DateTime.tryParse(a.fechaVisita);
+      final dateB = DateTime.tryParse(b.fechaVisita);
+      if (dateA == null || dateB == null) return 0;
+      return dateB.compareTo(dateA);
+    });
+
     if (mounted) setState(() => _visitas = allVisitas);
   }
 
-  // --- FUNCIÓN DE REFRESCO MEJORADA ---
   Future<void> _manualRefresh() async {
     setState(() => _isLoading = true);
     if (_isOnline) {
-      await _fetchRemoteVisitas(); // 1. DESCARGA
-      await SyncService.syncAllPendingData(); // 2. ENVÍA
+      await _fetchRemoteVisitas();
+      await SyncService.syncAllPendingData();
     }
-    await _loadLocalVisitas(); // 3. MUESTRA DESDE LOCAL
+    await _loadLocalVisitas();
     if (mounted) {
       setState(() => _isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(

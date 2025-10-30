@@ -44,6 +44,32 @@ class Productor extends HiveObject {
     String? uuid,
   }) : uuid = uuid ?? const Uuid().v4(),
        updatedAt = updatedAt ?? DateTime.now().toIso8601String();
+
+  // Dentro de la clase Productor
+  factory Productor.fromJson(Map<String, dynamic> json) {
+    return Productor(
+      serverId: json['id_productor'] as int?,
+      uuid: json['uuid'] as String? ?? '', // <-- CORRECCIÓN
+      nombre: json['nombre'] as String? ?? '', // <-- CORRECCIÓN
+      cui: json['cui'] as String?,
+      telefono: json['telefono'] as String?,
+      email: json['email'] as String?,
+      status: 'synced',
+      updatedAt: json['updated_at'] as String?,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      // No incluimos 'id_productor' (serverId) porque Supabase lo genera en la inserción.
+      // Lo incluimos en la actualización, pero el `update` de Supabase lo ignora.
+      'uuid': uuid,
+      'nombre': nombre,
+      'cui': cui,
+      'telefono': telefono,
+      'email': email,
+    };
+  }
 }
 
 class ProductorAdapter extends TypeAdapter<Productor> {

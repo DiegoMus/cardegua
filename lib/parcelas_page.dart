@@ -84,6 +84,31 @@ class Parcela extends HiveObject {
   }) : uuid = uuid ?? const Uuid().v4(),
        updatedAt = updatedAt ?? DateTime.now().toIso8601String();
 
+  // Dentro de la clase Parcela
+  factory Parcela.fromJson(Map<String, dynamic> json) {
+    double? toDouble(dynamic val) => (val as num?)?.toDouble();
+
+    return Parcela(
+      serverId: json['id_parcela'] as int?,
+      uuid: json['uuid'] as String? ?? '', // <-- CORRECCIÓN
+      nombre: json['nombre'] as String? ?? '', // <-- CORRECCIÓN
+      area: toDouble(json['area']),
+      tipoCultivoNombre: (json['tipo_cultivo'] != null)
+          ? json['tipo_cultivo']['cultivo']
+          : null,
+      idTipoCultivo: json['id_tipo_cultivo'] as int?,
+      latitud: toDouble(json['latitud']),
+      longitud: toDouble(json['longitud']),
+      altitud: toDouble(json['altitud']),
+      idMunicipio: json['id_municipio'] as int?,
+      vigente: json['vigente'] as bool? ?? true,
+      fechaRegistroIso: json['fecha_registro'] as String?,
+      productorId: json['id_productor'] as int?,
+      productorUuid: json['productor_uuid'] as String? ?? '', // <-- CORRECCIÓN
+      status: 'synced',
+      updatedAt: json['updated_at'] as String?,
+    );
+  }
   Map<String, dynamic> toMap() {
     return {
       // No incluimos 'id_parcela' (serverId) porque Supabase lo genera.

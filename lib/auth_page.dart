@@ -1,6 +1,11 @@
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:cardegua/sync_service.dart';
+import 'package:cardegua/productores_page.dart';
+import 'package:cardegua/parcelas_page.dart';
+import 'package:cardegua/visita_parcela.dart';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -8,10 +13,6 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:crypto/crypto.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:hive/hive.dart';
-import 'package:uuid/uuid.dart';
-
-import 'productores_page.dart';
-import 'parcelas_page.dart';
 
 class AuthPage extends StatefulWidget {
   const AuthPage({super.key});
@@ -266,31 +267,56 @@ class _AuthPageState extends State<AuthPage> {
         connectivityResult.contains(ConnectivityResult.wifi);
 
     if (isOnline) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => const Dialog(
+          child: Padding(
+            padding: EdgeInsets.all(20.0),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(width: 20),
+                Text("Iniciando y sincronizando..."),
+              ],
+            ),
+          ),
+        ),
+      );
+
       try {
         final response = await Supabase.instance.client.auth.signInWithPassword(
           email: email,
           password: password,
         );
         if (response.session != null) {
-          if (_rememberOffline) {
-            await _saveLocalCredentials(email, password);
-          }
-          await _initialFullSync();
-          if (mounted)
+          if (_rememberOffline) await _saveLocalCredentials(email, password);
+          await SyncService.syncDownAllDataFromServer(); // <--- AHORA SÍ ENCUENTRA ESTA FUNCIÓN
+          if (mounted) {
+            Navigator.of(context, rootNavigator: true).pop();
             Navigator.pushReplacement(
               context,
               MaterialPageRoute(builder: (_) => const ProductoresPage()),
             );
+          }
           return;
         }
       } on AuthException catch (e) {
+        if (mounted) Navigator.of(context, rootNavigator: true).pop();
         setState(() {
           errorMsg = 'Credenciales incorrectas: ${e.message}';
           _isLoading = false;
         });
         return;
       } catch (e) {
+        if (mounted) Navigator.of(context, rootNavigator: true).pop();
+        setState(() {
+          errorMsg = 'Error de sincronización: $e';
+          _isLoading = false;
+        });
         debugPrint('Error inesperado en login online: $e');
+        return;
       }
     }
 

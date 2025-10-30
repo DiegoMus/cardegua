@@ -9,6 +9,126 @@ import 'parcelas_page.dart';
 import 'visita_parcela.dart';
 
 class SyncService {
+  // ======================================================
+  // FUNCIÓN PÚBLICA #1: Descargar todo desde el servidor
+  // ======================================================
+  static Future<void> syncDownAllDataFromServer() async {
+    debugPrint(
+      '[SyncService] Iniciando descarga completa de datos del servidor...',
+    );
+    final supabase = Supabase.instance.client;
+
+    try {
+      // 1. Descargar Productores
+      final productoresData = await supabase.from('productores').select();
+      await _syncDownEntity<Productor>(
+        remoteData: List<Map<String, dynamic>>.from(productoresData),
+        box: await _openBox('productores', ProductorAdapter()),
+        fromJson: (json) => Productor.fromJson(json),
+      );
+
+      // 2. Descargar Parcelas
+      final parcelasData = await supabase.from('parcelas').select();
+      await _syncDownEntity<Parcela>(
+        remoteData: List<Map<String, dynamic>>.from(parcelasData),
+        box: await _openBox('parcelas', ParcelaAdapter()),
+        fromJson: (json) => Parcela.fromJson(json),
+      );
+
+      // 3. Descargar Visitas
+      final visitasData = await supabase.from('visitas_monitoreo').select();
+      await _syncDownEntity<VisitaMonitoreo>(
+        remoteData: List<Map<String, dynamic>>.from(visitasData),
+        box: await _openBox('visitas_monitoreo', VisitaMonitoreoAdapter()),
+        fromJson: (json) => VisitaMonitoreo.fromJson(json),
+      );
+
+      debugPrint(
+        '[SyncService] Descarga completa de datos finalizada con éxito.',
+      );
+    } catch (e) {
+      debugPrint(
+        '[SyncService] ¡¡¡ERROR CRÍTICO durante la descarga de datos!!!: $e',
+      );
+      throw Exception('No se pudieron sincronizar los datos iniciales.');
+    }
+  }
+
+  // ==============================================================
+  // FUNCIÓN PÚBLICA #2: Enviar cambios pendientes hacia el servidor
+  // ==============================================================
+  static Future<void> syncAllPendingData() async {
+    final productorBox = await _openBox('productores', ProductorAdapter());
+    final parcelaBox = await _openBox('parcelas', ParcelaAdapter());
+    final visitaBox = await _openBox(
+      'visitas_monitoreo',
+      VisitaMonitoreoAdapter(),
+    );
+
+    // Sincroniza Productores (C-U-D)
+    await _syncEntity<Productor>(
+      box: productorBox,
+      supabaseTable: 'productores',
+      toMap: (p) => p.toMap(),
+      onSuccess: (p, remoteData) => p.serverId = remoteData['id_productor'],
+    );
+
+    // Sincroniza Parcelas (C-U-D)
+    await _syncEntity<Parcela>(
+      box: parcelaBox,
+      supabaseTable: 'parcelas',
+      preSyncAction: (parcela) {
+        try {
+          final owner = productorBox.values.firstWhere(
+            (p) => p.uuid == parcela.productorUuid,
+          );
+          if (owner.status != 'synced' || owner.serverId == null) {
+            debugPrint(
+              '[SyncService] OMITIENDO parcela "${parcela.nombre}" porque su productor no está sincronizado.',
+            );
+            return false;
+          }
+          parcela.productorId = owner.serverId;
+          return true;
+        } catch (_) {
+          return false;
+        }
+      },
+      toMap: (p) => p.toMap(),
+      onSuccess: (p, remoteData) => p.serverId = remoteData['id_parcela'],
+    );
+
+    // Sincroniza Visitas (C-U-D)
+    await _syncEntity<VisitaMonitoreo>(
+      box: visitaBox,
+      supabaseTable: 'visitas_monitoreo',
+      preSyncAction: (visita) {
+        try {
+          final owner = parcelaBox.values.firstWhere(
+            (p) => p.uuid == visita.parcelaUuid,
+          );
+          if (owner.status != 'synced' || owner.serverId == null) {
+            debugPrint(
+              '[SyncService] OMITIENDO visita (uuid: ${visita.uuid}) porque su parcela no está sincronizada.',
+            );
+            return false;
+          }
+          visita.parcelaId = owner.serverId;
+          return true;
+        } catch (_) {
+          return false;
+        }
+      },
+      toMap: (v) => v
+          .toMap(), // Necesitarás añadir un .toMap() a tu clase VisitaMonitoreo
+      onSuccess: (v, remoteData) => v.serverId = remoteData['id_visita'],
+    );
+  }
+
+  // =====================================
+  // FUNCIONES DE AYUDA PRIVADAS (HELPERS)
+  // =====================================
+
   static Future<Box<T>> _openBox<T>(String name, TypeAdapter<T> adapter) async {
     try {
       if (!Hive.isAdapterRegistered(adapter.typeId))
@@ -18,180 +138,99 @@ class SyncService {
     return Hive.box<T>(name);
   }
 
-  static Future<void> syncAllPendingData() async {
-    final supabase = Supabase.instance.client;
-    final productorBox = await _openBox('productores', ProductorAdapter());
-    final parcelaBox = await _openBox('parcelas', ParcelaAdapter());
-    final visitaBox = await _openBox(
-      'visitas_monitoreo',
-      VisitaMonitoreoAdapter(),
-    );
+  static Future<void> _syncDownEntity<T extends HiveObject>({
+    required List<Map<String, dynamic>> remoteData,
+    required Box<T> box,
+    required T Function(Map<String, dynamic>) fromJson,
+  }) async {
+    for (final json in remoteData) {
+      final uuid = json['uuid'] as String?;
+      if (uuid == null) continue;
 
-    // --- PASO 1: SINCRONIZAR PRODUCTORES ---
-    final pendingProductores = productorBox.values
-        .where((p) => p.status == 'pending' && p.operation == 'create')
-        .toList();
-    if (pendingProductores.isNotEmpty) {
-      debugPrint(
-        '[SyncService] Intentando sincronizar ${pendingProductores.length} productores nuevos...',
-      );
+      T? localItem;
       try {
-        final List<Map<String, dynamic>> productoresToInsert =
-            pendingProductores
-                .map(
-                  (p) => {
-                    'nombre': p.nombre,
-                    'email': p.email,
-                    'telefono': p.telefono,
-                    'cui': p.cui,
-                    'uuid': p.uuid,
-                  },
-                )
-                .toList();
+        localItem = box.values.firstWhere(
+          (item) => (item as dynamic).uuid == uuid,
+        );
+      } catch (_) {
+        localItem = null;
+      }
+
+      if (localItem != null && (localItem as dynamic).status == 'pending') {
+        continue;
+      }
+
+      final newItem = fromJson(json);
+      if (localItem != null) {
+        await box.put(localItem.key, newItem);
+      } else {
+        await box.add(newItem);
+      }
+    }
+  }
+
+  static Future<void> _syncEntity<T extends HiveObject>({
+    required Box<T> box,
+    required String supabaseTable,
+    required Map<String, dynamic> Function(T) toMap,
+    required void Function(T, Map<String, dynamic>) onSuccess,
+    bool Function(T)? preSyncAction,
+  }) async {
+    final supabase = Supabase.instance.client;
+    final pendingItems = box.values
+        .where((item) => (item as dynamic).status == 'pending')
+        .toList();
+
+    // CREATES
+    for (final item in pendingItems.where(
+      (i) => (i as dynamic).operation == 'create',
+    )) {
+      if (preSyncAction != null && !preSyncAction(item)) continue;
+      try {
         final response = await supabase
-            .from('productores')
-            .insert(productoresToInsert)
-            .select();
-        for (final remoteProd in response) {
-          final localProd = productorBox.values.firstWhere(
-            (p) => p.uuid == remoteProd['uuid'],
-          );
-          localProd.serverId = remoteProd['id_productor'];
-          localProd.status = 'synced';
-          localProd.operation = null;
-          await localProd.save();
-          debugPrint(
-            '[SyncService] Productor "${localProd.nombre}" sincronizado con éxito.',
-          );
-        }
-      } on PostgrestException catch (e) {
-        if (e.code == '23505') {
-          debugPrint(
-            '[SyncService] Aviso: Se intentó re-sincronizar un productor que ya existía. Esto es normal. Resolviendo...',
-          );
-          // Si hay duplicados, los buscamos uno a uno para marcarlos como sincronizados
-          for (final p in pendingProductores) {
-            try {
-              final remote = await supabase
-                  .from('productores')
-                  .select('id_productor')
-                  .eq('uuid', p.uuid)
-                  .single();
-              p.serverId = remote['id_productor'];
-              p.status = 'synced';
-              p.operation = null;
-              await p.save();
-            } catch (_) {}
-          }
-        } else {
-          debugPrint('[SyncService] ERROR CRÍTICO AL INSERTAR PRODUCTORES: $e');
-        }
+            .from(supabaseTable)
+            .insert(toMap(item))
+            .select()
+            .single();
+        onSuccess(item, response);
+        (item as dynamic).status = 'synced';
+        (item as dynamic).operation = null;
+        await item.save();
+      } catch (e) {
+        debugPrint('[SyncService] ERROR creando en "$supabaseTable": $e');
       }
     }
 
-    // --- PASO 2: SINCRONIZAR PARCELAS ---
-    final pendingParcelas = parcelaBox.values
-        .where((p) => p.status == 'pending' && p.operation == 'create')
-        .toList();
-    if (pendingParcelas.isNotEmpty) {
-      debugPrint(
-        '[SyncService] Intentando sincronizar ${pendingParcelas.length} parcelas nuevas...',
-      );
-      for (final parcela in pendingParcelas) {
-        try {
-          final ownerProductor = productorBox.values.firstWhere(
-            (p) => p.uuid == parcela.productorUuid,
-          );
-          if (ownerProductor.status != 'synced' ||
-              ownerProductor.serverId == null) {
-            debugPrint(
-              '[SyncService] OMITIENDO parcela "${parcela.nombre}" porque su productor no está sincronizado.',
-            );
-            continue;
-          }
-          parcela.productorId = ownerProductor.serverId;
-          final response = await supabase
-              .from('parcelas')
-              .insert(parcela.toMap())
-              .select()
-              .single();
-          parcela.serverId = response['id_parcela'];
-          parcela.status = 'synced';
-          parcela.operation = null;
-          await parcela.save();
-          debugPrint(
-            '[SyncService] Parcela "${parcela.nombre}" sincronizada con éxito.',
-          );
-        } catch (e) {
-          debugPrint(
-            '[SyncService] ERROR sincronizando parcela "${parcela.nombre}": $e',
-          );
-        }
+    // UPDATES
+    for (final item in pendingItems.where(
+      (i) => (i as dynamic).operation == 'update',
+    )) {
+      if (preSyncAction != null && !preSyncAction(item)) continue;
+      try {
+        await supabase
+            .from(supabaseTable)
+            .update(toMap(item))
+            .eq('uuid', (item as dynamic).uuid);
+        (item as dynamic).status = 'synced';
+        (item as dynamic).operation = null;
+        await item.save();
+      } catch (e) {
+        debugPrint('[SyncService] ERROR actualizando en "$supabaseTable": $e');
       }
     }
 
-    // --- PASO 3: SINCRONIZAR VISITAS (¡AHORA COMPLETO!) ---
-    final pendingVisitas = visitaBox.values
-        .where((v) => v.status == 'pending' && v.operation == 'create')
-        .toList();
-    if (pendingVisitas.isNotEmpty) {
-      debugPrint(
-        '[SyncService] Intentando sincronizar ${pendingVisitas.length} visitas nuevas...',
-      );
-      for (final visita in pendingVisitas) {
-        try {
-          final ownerParcela = parcelaBox.values.firstWhere(
-            (p) => p.uuid == visita.parcelaUuid,
-          );
-          if (ownerParcela.status != 'synced' ||
-              ownerParcela.serverId == null) {
-            debugPrint(
-              '[SyncService] OMITIENDO visita (uuid: ${visita.uuid}) porque su parcela no está sincronizada.',
-            );
-            continue;
-          }
-          visita.parcelaId = ownerParcela.serverId;
-          final insertData = {
-            'id_parcela': visita.parcelaId,
-            'fecha_visita': visita.fechaVisita,
-            'observaciones': visita.observaciones,
-            'recomendaciones': visita.recomendaciones,
-            'ep': visita.ep,
-            'ap': visita.ap,
-            'mp': visita.mp,
-            'bp': visita.bp,
-            'cp': visita.cp,
-            'monitoreo_plantas': jsonDecode(visita.monitoreoPlantasJson),
-            'usuario_registro_id': visita.usuarioRegistroId,
-            'usuario_registro_email': visita.usuarioRegistroEmail,
-            'uuid': visita.uuid,
-            'uuid_parcelas': visita.parcelaUuid,
-          };
-          await supabase.from('visitas_monitoreo').insert(insertData);
-          visita.status = 'synced';
-          visita.operation = null;
-          await visita.save();
-          debugPrint(
-            '[SyncService] Visita para parcela "${ownerParcela.nombre}" sincronizada con éxito.',
-          );
-        } on PostgrestException catch (e) {
-          if (e.code == '23505') {
-            debugPrint(
-              '[SyncService] La visita (uuid: ${visita.uuid}) ya existía. Marcando como sincronizada.',
-            );
-            visita.status = 'synced';
-            visita.operation = null;
-            await visita.save();
-          } else {
-            debugPrint(
-              '[SyncService] ERROR de BD sincronizando visita (uuid: ${visita.uuid}): $e',
-            );
-          }
-        } catch (e) {
-          debugPrint(
-            '[SyncService] ERROR GENERAL sincronizando visita (uuid: ${visita.uuid}): $e',
-          );
-        }
+    // DELETES
+    for (final item in pendingItems.where(
+      (i) => (i as dynamic).operation == 'delete',
+    )) {
+      try {
+        await supabase
+            .from(supabaseTable)
+            .delete()
+            .eq('uuid', (item as dynamic).uuid);
+        await item.delete();
+      } catch (e) {
+        debugPrint('[SyncService] ERROR eliminando en "$supabaseTable": $e');
       }
     }
   }

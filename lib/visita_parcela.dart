@@ -70,6 +70,50 @@ class VisitaMonitoreo extends HiveObject {
     String? updatedAt,
   }) : this.uuid = uuid ?? const Uuid().v4(),
        this.updatedAt = updatedAt ?? DateTime.now().toIso8601String();
+
+  // Dentro de la clase VisitaMonitoreo
+  // En lib/visita_parcela.dart, dentro de la clase VisitaMonitoreo
+
+  factory VisitaMonitoreo.fromJson(Map<String, dynamic> json) {
+    return VisitaMonitoreo(
+      serverId: json['id_visita'] as int?,
+      uuid: json['uuid'] as String? ?? '', // <-- CORRECCIÓN
+      parcelaUuid: json['uuid_parcelas'] as String? ?? '', // <-- CORRECCIÓN
+      parcelaId: json['id_parcela'] as int?,
+      fechaVisita: json['fecha_visita'] as String? ?? '', // <-- CORRECCIÓN
+      observaciones: json['observaciones'] as String?,
+      recomendaciones: json['recomendaciones'] as String?,
+      ep: json['ep'] as int?,
+      ap: json['ap'] as int?,
+      mp: json['mp'] as int?,
+      bp: json['bp'] as int?,
+      cp: json['cp'] as int?,
+      monitoreoPlantasJson: jsonEncode(json['monitoreo_plantas'] ?? []),
+      usuarioRegistroId: json['usuario_registro_id'] as String?,
+      usuarioRegistroEmail: json['usuario_registro_email'] as String?,
+      status: 'synced',
+      updatedAt: json['updated_at'] as String?,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'uuid': uuid,
+      'uuid_parcelas': parcelaUuid,
+      'id_parcela': parcelaId,
+      'fecha_visita': fechaVisita,
+      'observaciones': observaciones,
+      'recomendaciones': recomendaciones,
+      'ep': ep,
+      'ap': ap,
+      'mp': mp,
+      'bp': bp,
+      'cp': cp,
+      'monitoreo_plantas': jsonDecode(monitoreoPlantasJson),
+      'usuario_registro_id': usuarioRegistroId,
+      'usuario_registro_email': usuarioRegistroEmail,
+    };
+  }
 }
 
 class VisitaMonitoreoAdapter extends TypeAdapter<VisitaMonitoreo> {
