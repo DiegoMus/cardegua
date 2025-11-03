@@ -235,7 +235,6 @@ class _HistorialVisitasParcelaState extends State<HistorialVisitasParcela> {
                   ),
                   _buildDataRow('c/Picudo', 'frutos_con_picudo', monitoreoData),
                   _buildDataRow('c/Trips', 'frutos_con_trips', monitoreoData),
-                  _buildDataRow('c/Mosca', 'frutos_con_mosca', monitoreoData),
                   _buildDataRow(
                     's/Cosechar',
                     'frutos_sin_cosechar',

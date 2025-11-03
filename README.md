@@ -14,3 +14,9 @@ A few resources to get you started if this is your first Flutter project:
 For help getting started with Flutter development, view the
 [online documentation](https://docs.flutter.dev/), which offers tutorials,
 samples, guidance on mobile development, and a full API reference.
+bug
+
+1. encabezados - Listo
+2. eliminar la variable moscas
+3. Latitud y long cambiar x y y - Listo 
+4. Buscador de municipios

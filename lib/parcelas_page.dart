@@ -236,6 +236,7 @@ class _ParcelasPageState extends State<ParcelasPage>
   final _longitudController = TextEditingController();
   final _altitudController = TextEditingController();
   final _searchController = TextEditingController();
+  final _municipioSearchController = TextEditingController();
   bool _vigente = true;
   DateTime? _fechaRegistro;
 
@@ -294,6 +295,7 @@ class _ParcelasPageState extends State<ParcelasPage>
     _longitudController.dispose();
     _altitudController.dispose();
     _searchController.dispose();
+    _municipioSearchController.dispose();
     _connectivitySub.cancel();
     super.dispose();
   }
@@ -622,18 +624,137 @@ class _ParcelasPageState extends State<ParcelasPage>
   }
 
   Future<void> _pickMunicipio() async {
-    await _pickCatalog(
-      title: 'Seleccionar Municipio',
-      catalogBox: _municipiosBox,
-      idField: 'id_municipio',
-      nameField: 'nombre',
-      onSelected: (selected) {
-        setState(() {
-          _selectedMunicipioId = _toNullableInt(selected['id_municipio']);
-          _municipioController.text = selected['nombre'] ?? '';
-        });
+    // Asegúrate de que la caja esté abierta
+    if (!Hive.isBoxOpen('catalog_municipios'))
+      await Hive.openBox('catalog_municipios');
+    final Box municipiosBox = Hive.box('catalog_municipios');
+
+    List<Map<String, dynamic>> items = municipiosBox.values
+        .cast<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+    items.sort(
+      (a, b) => (a['nombre'] as String).compareTo(b['nombre'] as String),
+    );
+
+    List<Map<String, dynamic>> filtered = List.from(items);
+
+    _municipioSearchController.clear();
+
+    final selected = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx2, setStateModal) {
+            void applyFilter(String q) {
+              final qLower = q.trim().toLowerCase();
+              if (qLower.isEmpty) {
+                setStateModal(() => filtered = List.from(items));
+              } else {
+                setStateModal(() {
+                  filtered = items.where((m) {
+                    final nombre = (m['nombre'] ?? '').toString().toLowerCase();
+                    final departamento = (m['departamento'] ?? '')
+                        .toString()
+                        .toLowerCase();
+                    final codigo = (m['id_municipio'] ?? '')
+                        .toString()
+                        .toLowerCase();
+                    return nombre.contains(qLower) ||
+                        departamento.contains(qLower) ||
+                        codigo.contains(qLower);
+                  }).toList();
+                });
+              }
+            }
+
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.only(
+                  bottom: MediaQuery.of(ctx).viewInsets.bottom,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                      child: TextField(
+                        controller: _municipioSearchController,
+                        decoration: InputDecoration(
+                          prefixIcon: const Icon(Icons.search),
+                          hintText:
+                              'Buscar municipio por nombre, departamento o id',
+                          suffixIcon: IconButton(
+                            icon: const Icon(Icons.clear),
+                            onPressed: () {
+                              _municipioSearchController.clear();
+                              applyFilter('');
+                            },
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            vertical: 12,
+                            horizontal: 12,
+                          ),
+                        ),
+                        onChanged: applyFilter,
+                        autofocus: true,
+                      ),
+                    ),
+                    const Divider(height: 1),
+                    SizedBox(
+                      height:
+                          MediaQuery.of(ctx).size.height *
+                          0.55, // altura del modal
+                      child: filtered.isEmpty
+                          ? Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(20.0),
+                                child: Text(
+                                  'No se encontraron municipios.',
+                                  style: Theme.of(context).textTheme.bodyMedium,
+                                ),
+                              ),
+                            )
+                          : ListView.separated(
+                              itemCount: filtered.length,
+                              separatorBuilder: (_, __) =>
+                                  const Divider(height: 1),
+                              itemBuilder: (context, index) {
+                                final item = filtered[index];
+                                final displayName = item['nombre'] ?? '';
+                                final depto = item['departamento'] ?? '';
+                                return ListTile(
+                                  title: Text(displayName),
+                                  subtitle: depto != '' ? Text(depto) : null,
+                                  onTap: () => Navigator.of(
+                                    ctx,
+                                  ).pop(Map<String, dynamic>.from(item)),
+                                );
+                              },
+                            ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
       },
     );
+
+    if (selected != null) {
+      setState(() {
+        _selectedMunicipioId = _toNullableInt(
+          selected['id_municipio'] ?? selected['id'] ?? selected['codigo'],
+        );
+        _municipioController.text = (selected['nombre'] ?? '').toString();
+      });
+    }
   }
 
   @override
@@ -910,7 +1031,7 @@ class _ParcelasPageState extends State<ParcelasPage>
               TextFormField(
                 controller: _latitudController,
                 decoration: const InputDecoration(
-                  labelText: 'Latitud',
+                  labelText: 'X',
                   prefixIcon: Icon(
                     Icons.location_on,
                     color: Colors.green,
@@ -926,14 +1047,14 @@ class _ParcelasPageState extends State<ParcelasPage>
                 ),
                 keyboardType: TextInputType.number,
                 validator: (v) => (_toNullableDouble(v) == null)
-                    ? 'Ingrese una latitud válida'
+                    ? 'Ingrese un valor en el eje X válido'
                     : null,
               ),
               const SizedBox(height: 8),
               TextFormField(
                 controller: _longitudController,
                 decoration: const InputDecoration(
-                  labelText: 'Longitud',
+                  labelText: 'Y',
                   prefixIcon: Icon(
                     Icons.location_on,
                     color: Colors.green,
@@ -949,7 +1070,7 @@ class _ParcelasPageState extends State<ParcelasPage>
                 ),
                 keyboardType: TextInputType.number,
                 validator: (v) => (_toNullableDouble(v) == null)
-                    ? 'Ingrese una longitud válida'
+                    ? 'Ingrese un valor en el eje Y válido'
                     : null,
               ),
               const SizedBox(height: 8),

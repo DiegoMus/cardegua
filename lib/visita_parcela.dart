@@ -240,10 +240,7 @@ class _FormularioVisitaState extends State<FormularioVisita> {
     5,
     (_) => TextEditingController(),
   );
-  final List<TextEditingController> _frutosConMoscaControllers = List.generate(
-    5,
-    (_) => TextEditingController(),
-  );
+
   final List<TextEditingController> _frutosSinCosecharControllers =
       List.generate(5, (_) => TextEditingController());
 
@@ -299,7 +296,7 @@ class _FormularioVisitaState extends State<FormularioVisita> {
       _frutosSinDanoControllers[i].dispose();
       _frutosConPicudoControllers[i].dispose();
       _frutosConTripsControllers[i].dispose();
-      _frutosConMoscaControllers[i].dispose();
+
       _frutosSinCosecharControllers[i].dispose();
     }
     super.dispose();
@@ -382,8 +379,6 @@ class _FormularioVisitaState extends State<FormularioVisita> {
               int.tryParse(_frutosConPicudoControllers[i].text) ?? 0,
           'frutos_con_trips':
               int.tryParse(_frutosConTripsControllers[i].text) ?? 0,
-          'frutos_con_mosca':
-              int.tryParse(_frutosConMoscaControllers[i].text) ?? 0,
           'frutos_sin_cosechar':
               int.tryParse(_frutosSinCosecharControllers[i].text) ?? 0,
         },
@@ -695,11 +690,11 @@ class _FormularioVisitaState extends State<FormularioVisita> {
                                   ),
                                   columns: const [
                                     DataColumn(label: Text('Situación')),
-                                    DataColumn(label: Text('EP')),
-                                    DataColumn(label: Text('AP')),
-                                    DataColumn(label: Text('MP')),
-                                    DataColumn(label: Text('BP')),
-                                    DataColumn(label: Text('CP')),
+                                    DataColumn(label: Text('Planta 1')),
+                                    DataColumn(label: Text('Planta 2')),
+                                    DataColumn(label: Text('Planta 3')),
+                                    DataColumn(label: Text('Planta 4')),
+                                    DataColumn(label: Text('Planta 5')),
                                   ],
                                   rows: [
                                     _buildTableRow(
@@ -725,10 +720,6 @@ class _FormularioVisitaState extends State<FormularioVisita> {
                                     _buildTableRow(
                                       "Frutos c/Trips",
                                       _frutosConTripsControllers,
-                                    ),
-                                    _buildTableRow(
-                                      "Frutos c/Mosca",
-                                      _frutosConMoscaControllers,
                                     ),
                                     _buildTableRow(
                                       "Frutos s/Cosechar",
